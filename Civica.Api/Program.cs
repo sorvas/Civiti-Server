@@ -68,9 +68,13 @@ if (connectionString?.StartsWith("postgres://") == true || connectionString?.Sta
         var userInfo = uri.UserInfo.Split(':');
         var username = userInfo[0];
         var password = userInfo.Length > 1 ? userInfo[1] : string.Empty;
+        
+        // Log parsed components (without password)
+        Log.Information("Parsed DATABASE_URL - Host: {Host}, Port: {Port}, Database: {Database}, Username: {Username}", 
+            uri.Host, uri.Port, uri.AbsolutePath.TrimStart('/'), username);
 
         connectionString =
-            $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true";
+            $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true;Timeout=30;Command Timeout=30;Connection Idle Lifetime=300;Maximum Pool Size=100;Include Error Detail=true";
 
         Log.Information("Converted Railway DATABASE_URL to Npgsql format successfully");
     }
@@ -83,9 +87,18 @@ if (connectionString?.StartsWith("postgres://") == true || connectionString?.Sta
 
 builder.Services.AddDbContext<CivicaDbContext>(options =>
     options.UseNpgsql(connectionString, npgsqlOptions =>
-            npgsqlOptions.MigrationsHistoryTable("__EFMigrationsHistory"))
+            {
+                npgsqlOptions.MigrationsHistoryTable("__EFMigrationsHistory");
+                npgsqlOptions.CommandTimeout(30);
+                npgsqlOptions.EnableRetryOnFailure(
+                    maxRetryCount: 3,
+                    maxRetryDelay: TimeSpan.FromSeconds(10),
+                    errorCodesToAdd: null);
+            })
         .ConfigureWarnings(warnings =>
-            warnings.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
+            warnings.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning))
+        .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
+        .EnableDetailedErrors(builder.Environment.IsDevelopment()));
 
 // Authentication with Supabase JWT
 var supabaseUrl = Environment.GetEnvironmentVariable("SUPABASE_URL");
@@ -251,19 +264,27 @@ app.MapGet("/api/health", async (CivicaDbContext context, ISupabaseService supab
             Timestamp = DateTime.UtcNow,
             Version = "1.0.0",
             Database = "unknown",
-            Supabase = "unknown"
+            DatabaseError = (string?)null,
+            Supabase = "unknown",
+            Environment = app.Environment.EnvironmentName
         };
 
         try
         {
-            // Test database connectivity
-            await context.Database.CanConnectAsync();
+            // Test database connectivity with timeout
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await context.Database.CanConnectAsync(cts.Token);
             health = health with { Database = "connected" };
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Warning("Database health check timed out after 5 seconds");
+            health = health with { Database = "timeout", DatabaseError = "Connection timeout (5s)" };
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Database health check failed");
-            health = health with { Database = "disconnected" };
+            health = health with { Database = "disconnected", DatabaseError = ex.Message };
         }
 
         try
@@ -278,7 +299,7 @@ app.MapGet("/api/health", async (CivicaDbContext context, ISupabaseService supab
             health = health with { Supabase = "disconnected" };
         }
 
-        var overallStatus = health.Database == "connected" ? "Healthy" : "Unhealthy";
+        var overallStatus = health.Database == "connected" ? "Healthy" : "Degraded";
         return Results.Ok(health with { Status = overallStatus });
     })
     .WithName("HealthCheck")
@@ -289,24 +310,96 @@ app.MapGet("/api/health", async (CivicaDbContext context, ISupabaseService supab
         "Performs health checks on critical dependencies including PostgreSQL database and Supabase authentication service. Returns detailed connectivity status for each component.")
     .Produces(200);
 
-// Database migration on startup (Railway compatible)
-Log.Information("Attempting database migration...");
+// Database migration on startup (Railway compatible with retry logic)
+var skipMigration = Environment.GetEnvironmentVariable("SKIP_DB_MIGRATION") == "true";
 
-try
+if (!skipMigration)
 {
-    using IServiceScope scope = app.Services.CreateScope();
-    CivicaDbContext context = scope.ServiceProvider.GetRequiredService<CivicaDbContext>();
+    Log.Information("Attempting database migration...");
 
-    // EF Core Migrate() will create the database if it doesn't exist
-    await context.Database.MigrateAsync();
-    Log.Information("Database migration completed successfully");
+    const int maxRetries = 5;
+    const int delayMs = 5000;
+    bool migrationSuccess = false;
+
+    for (int retry = 1; retry <= maxRetries; retry++)
+    {
+        try
+        {
+            using IServiceScope scope = app.Services.CreateScope();
+            CivicaDbContext context = scope.ServiceProvider.GetRequiredService<CivicaDbContext>();
+
+            // Test connection first with shorter timeout
+            Log.Information($"Testing database connection (attempt {retry}/{maxRetries})...");
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            bool canConnect = await context.Database.CanConnectAsync(cts.Token);
+            
+            if (!canConnect)
+            {
+                Log.Warning($"Cannot connect to database on attempt {retry}");
+                if (retry < maxRetries)
+                {
+                    await Task.Delay(delayMs * retry); // Exponential backoff
+                    continue;
+                }
+                else
+                {
+                    // Final retry failed - don't attempt migration
+                    Log.Error("Database connection failed after all retries - skipping migration");
+                    break;
+                }
+            }
+
+            // Only attempt migration if we can connect
+            Log.Information("Database connection successful - executing migration...");
+            await context.Database.MigrateAsync();
+            Log.Information("Database migration completed successfully");
+            migrationSuccess = true;
+            break;
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Warning($"Database connection timed out on attempt {retry}");
+            if (retry < maxRetries)
+            {
+                Log.Information($"Waiting {delayMs * retry}ms before retry...");
+                await Task.Delay(delayMs * retry);
+                continue; // Explicitly continue to next retry
+            }
+            else
+            {
+                Log.Error("Database connection timed out after all retries");
+                break; // Exit the retry loop
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, $"Database migration attempt {retry} failed");
+            
+            if (retry < maxRetries)
+            {
+                Log.Information($"Waiting {delayMs * retry}ms before retry...");
+                await Task.Delay(delayMs * retry); // Exponential backoff
+                continue; // Explicitly continue to next retry
+            }
+            else
+            {
+                Log.Error("All database migration attempts failed");
+                // Don't throw in production to allow app to start
+                if (app.Environment.IsDevelopment())
+                    throw;
+                break; // Exit the retry loop
+            }
+        }
+    }
+
+    if (!migrationSuccess)
+    {
+        Log.Warning("Application starting without successful database migration - database operations may fail");
+    }
 }
-catch (Exception ex)
+else
 {
-    Log.Error(ex, "Database migration failed");
-    // Don't throw in production to allow app to start
-    if (app.Environment.IsDevelopment())
-        throw;
+    Log.Information("Skipping database migration due to SKIP_DB_MIGRATION=true");
 }
 
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
