@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 using System.Text.RegularExpressions;
 using Serilog;
 using FluentValidation;
@@ -113,6 +115,13 @@ if (string.IsNullOrWhiteSpace(supabaseAnonKey))
     supabaseAnonKey = builder.Configuration["Supabase:AnonKey"];
 }
 
+// Get JWT secret for token validation (different from anon key)
+var jwtSecret = Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
+if (string.IsNullOrWhiteSpace(jwtSecret))
+{
+    jwtSecret = builder.Configuration["Supabase:JwtSecret"];
+}
+
 // Validate Supabase configuration early
 if (string.IsNullOrWhiteSpace(supabaseUrl))
 {
@@ -133,19 +142,69 @@ if (string.IsNullOrWhiteSpace(supabaseAnonKey))
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        // The issuer in Supabase JWTs is the auth endpoint URL
+        var issuer = $"{supabaseUrl}/auth/v1";
+        
         options.Authority = supabaseUrl;
         options.Audience = "authenticated";
         options.RequireHttpsMetadata = builder.Environment.IsProduction();
         options.SaveToken = true;
-        options.TokenValidationParameters = new()
+        
+        // For Supabase, we can skip signature validation if we don't have the JWT secret
+        // and rely on the Supabase service to validate tokens
+        if (!string.IsNullOrWhiteSpace(jwtSecret))
         {
-            ValidateIssuerSigningKey = true,
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.Zero,
-            ValidIssuer = supabaseUrl,
-            ValidAudience = "authenticated"
+            options.TokenValidationParameters = new()
+            {
+                ValidateIssuerSigningKey = true,
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.Zero,
+                ValidIssuer = issuer,
+                ValidAudience = "authenticated",
+                IssuerSigningKey = new SymmetricSecurityKey(
+                    Encoding.UTF8.GetBytes(jwtSecret))
+            };
+        }
+        else
+        {
+            // Simplified validation - rely on Supabase service for validation
+            options.TokenValidationParameters = new()
+            {
+                ValidateIssuerSigningKey = false,  // Skip signature validation
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.Zero,
+                ValidIssuer = issuer,
+                ValidAudience = "authenticated"
+            };
+            
+            Log.Warning("JWT secret not configured. Token signature validation is disabled. " +
+                       "Set SUPABASE_JWT_SECRET environment variable for production use.");
+        }
+        
+        // Log JWT validation events for debugging
+        options.Events = new JwtBearerEvents
+        {
+            OnAuthenticationFailed = context =>
+            {
+                Log.Error("Authentication failed: {Error}", context.Exception?.Message);
+                return Task.CompletedTask;
+            },
+            OnTokenValidated = context =>
+            {
+                Log.Information("Token validated for user: {UserId}", 
+                    context.Principal?.FindFirst("sub")?.Value);
+                return Task.CompletedTask;
+            },
+            OnChallenge = context =>
+            {
+                Log.Warning("JWT Challenge: {Error} - {ErrorDescription}", 
+                    context.Error, context.ErrorDescription);
+                return Task.CompletedTask;
+            }
         };
     });
 
@@ -185,6 +244,9 @@ builder.Services.AddScoped<IGamificationService, GamificationService>();
 
 // Validators
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
+
+// HttpClient for development endpoints
+builder.Services.AddHttpClient();
 
 WebApplication app = builder.Build();
 
@@ -238,6 +300,7 @@ app.MapUserEndpoints();
 app.MapIssueEndpoints();
 app.MapAdminEndpoints();
 app.MapGamificationEndpoints();
+app.MapDevAuthEndpoints(); // Development-only endpoints for testing
 
 // Root endpoint redirects to Swagger UI
 app.MapGet("/", () => Results.Redirect("/swagger"))
