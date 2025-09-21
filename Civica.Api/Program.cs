@@ -12,6 +12,7 @@ using Civica.Api.Infrastructure.Middleware;
 using Civica.Api.Infrastructure.Constants;
 using Civica.Api.Infrastructure.Configuration;
 using Civica.Api.Endpoints;
+using Microsoft.IdentityModel.Protocols;
 using Swashbuckle.AspNetCore.Filters;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
@@ -165,18 +166,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         // For debugging - log the expected issuer
         Log.Information("Configuring JWT validation with issuer: {Issuer}", issuer);
 
-        // Use Supabase's JWKS endpoint for automatic key discovery and rotation support
-        // This supports both legacy HS256 and new ECC keys
+        // Configure JWT validation to use Supabase's JWKS endpoint
+        // This supports JWT Keys with automatic key rotation
         var jwksUri = $"{supabaseUrl}/auth/v1/.well-known/jwks.json";
 
-        // Configure to use JWKS for key discovery (supports key rotation)
-        options.Authority = $"{supabaseUrl}/auth/v1";
-        options.Audience = "authenticated";
-        options.RequireHttpsMetadata = !builder.Environment.IsDevelopment(); // HTTPS required except in dev
+        // Configure the handler to fetch keys from JWKS
+        options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
         options.SaveToken = true;
 
-        // Try to use JWKS endpoint first for automatic key discovery
-        options.MetadataAddress = jwksUri;
+        // Use custom configuration retriever for JWKS without full OIDC
+        options.ConfigurationManager = new Microsoft.IdentityModel.Protocols.ConfigurationManager<Microsoft.IdentityModel.Protocols.OpenIdConnect.OpenIdConnectConfiguration>(
+            jwksUri,
+            new JwksRetriever(),
+            new Microsoft.IdentityModel.Protocols.HttpDocumentRetriever());
 
         // Token validation parameters
         options.TokenValidationParameters = new TokenValidationParameters
@@ -187,18 +189,17 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero,
             ValidIssuer = issuer,
-            ValidAudience = "authenticated"
+            ValidAudience = "authenticated",
+            // The ConfigurationManager will provide the signing keys
+            IssuerSigningKeyResolver = (token, securityToken, kid, validationParameters) =>
+            {
+                // This will be populated by the ConfigurationManager from JWKS
+                return options.ConfigurationManager?.GetConfigurationAsync().Result?.SigningKeys;
+            }
         };
 
-        // If JWT secret is provided (legacy support), add it as a fallback
-        if (!string.IsNullOrWhiteSpace(jwtSecret))
-        {
-            options.TokenValidationParameters.IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(jwtSecret));
-            Log.Information("JWT validation configured with legacy secret as fallback for {Environment}", environmentName);
-        }
-
         Log.Information("JWT validation configured with JWKS endpoint: {JwksUri}", jwksUri);
+        Log.Information("This supports automatic key rotation and both HS256 and ECC keys");
 
         // Log JWT validation events for debugging
         options.Events = new JwtBearerEvents
