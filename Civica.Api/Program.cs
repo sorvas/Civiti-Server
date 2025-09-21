@@ -175,10 +175,12 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         options.SaveToken = true;
 
         // Use custom configuration retriever for JWKS without full OIDC
-        options.ConfigurationManager = new Microsoft.IdentityModel.Protocols.ConfigurationManager<Microsoft.IdentityModel.Protocols.OpenIdConnect.OpenIdConnectConfiguration>(
+        var configurationManager = new Microsoft.IdentityModel.Protocols.ConfigurationManager<Microsoft.IdentityModel.Protocols.OpenIdConnect.OpenIdConnectConfiguration>(
             jwksUri,
             new JwksRetriever(),
             new Microsoft.IdentityModel.Protocols.HttpDocumentRetriever());
+
+        options.ConfigurationManager = configurationManager;
 
         // Token validation parameters
         options.TokenValidationParameters = new TokenValidationParameters
@@ -189,13 +191,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero,
             ValidIssuer = issuer,
-            ValidAudience = "authenticated",
-            // The ConfigurationManager will provide the signing keys
-            IssuerSigningKeyResolver = (token, securityToken, kid, validationParameters) =>
-            {
-                // This will be populated by the ConfigurationManager from JWKS
-                return options.ConfigurationManager?.GetConfigurationAsync().Result?.SigningKeys;
-            }
+            ValidAudience = "authenticated"
+            // Remove IssuerSigningKeyResolver - let the middleware handle it automatically
+            // The ConfigurationManager will provide keys internally without deadlock
         };
 
         Log.Information("JWT validation configured with JWKS endpoint: {JwksUri}", jwksUri);
