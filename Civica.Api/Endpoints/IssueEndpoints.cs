@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Civica.Api.Services;
 using Civica.Api.Services.Interfaces;
 using Civica.Api.Infrastructure.Constants;
 using Civica.Api.Infrastructure.Extensions;
@@ -145,9 +146,8 @@ public static class IssueEndpoints
                     return TypedResults.NotFound();
                 }
 
-                if (error?.Contains("wait") == true)
+                if (error == IssueService.RateLimitedError)
                 {
-                    // Rate limited - return 429 Too Many Requests
                     return TypedResults.StatusCode(429);
                 }
 

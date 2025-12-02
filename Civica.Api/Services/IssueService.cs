@@ -19,6 +19,11 @@ public class IssueService(
     : IIssueService
 {
     private static readonly TimeSpan EmailCooldownDuration = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Error message returned when rate limited. Used by endpoint to detect 429 response.
+    /// </summary>
+    public const string RateLimitedError = "RATE_LIMITED";
     public async Task<PagedResult<IssueListResponse>> GetAllIssuesAsync(GetIssuesRequest request)
     {
         try
@@ -351,7 +356,7 @@ public class IssueService(
             if (memoryCache.TryGetValue(cacheKey, out _))
             {
                 logger.LogInformation("Rate limit hit for issue {IssueId} from IP {ClientIp}", issueId, clientIp);
-                return (false, "Please wait before confirming another email for this issue");
+                return (false, RateLimitedError);
             }
 
             // Check if issue exists and is valid for incrementing
@@ -373,17 +378,20 @@ public class IssueService(
                 return (false, "Issue is not publicly available");
             }
 
-            // Atomic increment using ExecuteUpdateAsync to prevent race conditions
+            // Atomic increment with status/visibility check to prevent TOCTOU race condition
             int rowsAffected = await context.Issues
-                .Where(i => i.Id == issueId)
+                .Where(i => i.Id == issueId
+                         && i.Status == IssueStatus.Approved
+                         && i.PublicVisibility)
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(i => i.EmailsSent, i => i.EmailsSent + 1)
                     .SetProperty(i => i.UpdatedAt, DateTime.UtcNow));
 
             if (rowsAffected == 0)
             {
-                logger.LogWarning("Failed to increment email count for issue {IssueId}", issueId);
-                return (false, "Failed to update issue");
+                // Issue may have been unapproved/hidden between check and update
+                logger.LogWarning("Failed to increment email count for issue {IssueId} - may have been modified", issueId);
+                return (false, "Issue is no longer publicly available");
             }
 
             // Set cooldown in cache
