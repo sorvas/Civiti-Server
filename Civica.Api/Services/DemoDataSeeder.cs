@@ -76,10 +76,14 @@ public class DemoDataSeeder : IHostedService
         var demoIssueAuthorities = CreateDemoIssueAuthorities();
         context.IssueAuthorities.AddRange(demoIssueAuthorities);
 
+        // Create demo photos for issues
+        var demoPhotos = CreateDemoPhotos();
+        context.IssuePhotos.AddRange(demoPhotos);
+
         await context.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Seeded 1 demo user, {IssueCount} demo issues, and {LinkCount} issue-authority links",
-            demoIssues.Count, demoIssueAuthorities.Count);
+        _logger.LogInformation("Seeded 1 demo user, {IssueCount} demo issues, {LinkCount} issue-authority links, and {PhotoCount} photos",
+            demoIssues.Count, demoIssueAuthorities.Count, demoPhotos.Count);
     }
 
     private static UserProfile CreateDemoUser()
@@ -475,5 +479,85 @@ public class DemoDataSeeder : IHostedService
                 CreatedAt = DateTime.UtcNow
             }
         ];
+    }
+
+    /// <summary>
+    /// Creates demo photos for each issue.
+    /// Uses placeholder images - replace URLs with real images as needed.
+    /// </summary>
+    private static List<IssuePhoto> CreateDemoPhotos()
+    {
+        var photos = new List<IssuePhoto>();
+        var issueIds = new[]
+        {
+            "eeeeeeee-0001-0001-0001-eeeeeeeeeeee", // Gropi Lipscani
+            "eeeeeeee-0002-0002-0002-eeeeeeeeeeee", // Gunoi Herăstrău
+            "eeeeeeee-0003-0003-0003-eeeeeeeeeeee", // Stație STB
+            "eeeeeeee-0004-0004-0004-eeeeeeeeeeee", // Iluminat
+            "eeeeeeee-0005-0005-0005-eeeeeeeeeeee", // Hidrant
+            "eeeeeeee-0006-0006-0006-eeeeeeeeeeee", // Trotuar
+            "eeeeeeee-0007-0007-0007-eeeeeeeeeeee", // Semafoare
+            "eeeeeeee-0008-0008-0008-eeeeeeeeeeee", // Copaci
+            "eeeeeeee-0009-0009-0009-eeeeeeeeeeee", // Rampe
+            "eeeeeeee-0010-0010-0010-eeeeeeeeeeee"  // Canalizare
+        };
+
+        var photoDescriptions = new[]
+        {
+            ("Vedere de ansamblu a problemei", "Detaliu apropiat"),
+            ("Situația actuală în parc", "Zona afectată"),
+            ("Stația fără acoperiș", "Vedere laterală"),
+            ("Stâlpi nefuncționali", "Zona întunecată noaptea"),
+            ("Hidrantul deteriorat", "Detaliu damage"),
+            ("Trotuarul degradat", "Plăci sparte"),
+            ("Intersecția problematică", "Vedere din trafic"),
+            ("Copaci uscați", "Crengi periculoase"),
+            ("Intrarea fără rampă", "Scările de acces"),
+            ("Strada inundată", "Canalizarea înfundată")
+        };
+
+        for (int i = 0; i < issueIds.Length; i++)
+        {
+            var issueId = Guid.Parse(issueIds[i]);
+            var (primaryDesc, secondaryDesc) = photoDescriptions[i];
+
+            // Primary photo
+            photos.Add(new IssuePhoto
+            {
+                Id = Guid.Parse($"cccccccc-{i + 1:D4}-0001-0001-cccccccccccc"),
+                IssueId = issueId,
+                Url = $"https://picsum.photos/seed/civica{i + 1}a/800/600",
+                ThumbnailUrl = $"https://picsum.photos/seed/civica{i + 1}a/200/150",
+                Caption = primaryDesc,
+                Description = $"Fotografie principală - {primaryDesc}",
+                IsPrimary = true,
+                Quality = PhotoQuality.High,
+                FileSize = 245000,
+                Width = 800,
+                Height = 600,
+                Format = "jpg",
+                CreatedAt = DateTime.UtcNow.AddDays(-i - 1)
+            });
+
+            // Secondary photo
+            photos.Add(new IssuePhoto
+            {
+                Id = Guid.Parse($"cccccccc-{i + 1:D4}-0002-0002-cccccccccccc"),
+                IssueId = issueId,
+                Url = $"https://picsum.photos/seed/civica{i + 1}b/800/600",
+                ThumbnailUrl = $"https://picsum.photos/seed/civica{i + 1}b/200/150",
+                Caption = secondaryDesc,
+                Description = $"Fotografie secundară - {secondaryDesc}",
+                IsPrimary = false,
+                Quality = PhotoQuality.High,
+                FileSize = 198000,
+                Width = 800,
+                Height = 600,
+                Format = "jpg",
+                CreatedAt = DateTime.UtcNow.AddDays(-i - 1)
+            });
+        }
+
+        return photos;
     }
 }
