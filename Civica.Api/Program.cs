@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Serilog;
 using FluentValidation;
@@ -29,6 +31,13 @@ builder.Host.UseSerilog();
 // Add services
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi(); // Add OpenAPI support for .NET 9
+
+// Configure JSON serialization to handle enums as strings (case-insensitive)
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: true));
+    options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+});
 
 // Configure Swagger with comprehensive documentation
 builder.Services.AddSwaggerGen(options => { options.ConfigureSwagger(builder.Configuration); });
@@ -122,13 +131,6 @@ if (string.IsNullOrWhiteSpace(supabaseAnonKey))
     supabaseAnonKey = builder.Configuration["Supabase:AnonKey"];
 }
 
-// Get JWT secret for legacy fallback validation (optional with JWKS)
-var jwtSecret = Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
-if (string.IsNullOrWhiteSpace(jwtSecret))
-{
-    jwtSecret = builder.Configuration["Supabase:JwtSecret"];
-}
-
 // Validate Supabase configuration early
 if (string.IsNullOrWhiteSpace(supabaseUrl))
 {
@@ -157,9 +159,7 @@ JwtValidationOptions jwtValidationOptions = new JwtValidationOptions
     ValidAudience = "authenticated",
     JwksCacheTtlMs = 60 * 60 * 1000, // 1 hour cache
     ClockSkew = TimeSpan.Zero,
-    RequireHttpsMetadata = !builder.Environment.IsDevelopment(),
-    LegacyJwtSecret = jwtSecret,
-    EnableLegacyFallback = !string.IsNullOrWhiteSpace(jwtSecret)
+    RequireHttpsMetadata = !builder.Environment.IsDevelopment()
 };
 
 // Register JWT validation options
@@ -171,20 +171,9 @@ builder.Services.Configure<JwtValidationOptions>(options =>
     options.JwksCacheTtlMs = jwtValidationOptions.JwksCacheTtlMs;
     options.ClockSkew = jwtValidationOptions.ClockSkew;
     options.RequireHttpsMetadata = jwtValidationOptions.RequireHttpsMetadata;
-    options.LegacyJwtSecret = jwtValidationOptions.LegacyJwtSecret;
-    options.EnableLegacyFallback = jwtValidationOptions.EnableLegacyFallback;
 });
 
-// For Supabase with JWT Keys, JWKS is the primary method
-// The legacy JWT secret can still be provided for backward compatibility
-if (!string.IsNullOrWhiteSpace(jwtSecret))
-{
-    Log.Information("Legacy JWT secret provided - will be used as fallback for {Environment}", environmentName);
-}
-else
-{
-    Log.Information("Using Supabase JWKS endpoint for key discovery: {JwksUrl}", jwtValidationOptions.JwksUrl);
-}
+Log.Information("Using Supabase JWKS endpoint for key discovery: {JwksUrl}", jwtValidationOptions.JwksUrl);
 
 // Register JWKS Manager service and dependencies
 builder.Services.AddSingleton<IJwksManager, JwksManager>();
@@ -205,6 +194,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         options.RequireHttpsMetadata = jwtValidationOptions.RequireHttpsMetadata;
         options.SaveToken = true;
 
+        // Disable automatic claim type mapping
+        // This keeps JWT claims as-is (e.g., "sub" stays "sub", not mapped to NameIdentifier)
+        // This is the recommended approach for working with external identity providers like Supabase
+        options.MapInboundClaims = false;
+
         // Token validation parameters
         options.TokenValidationParameters = new TokenValidationParameters
         {
@@ -222,24 +216,12 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         // Note: IssuerSigningKeyResolver is configured via JwtBearerPostConfigureOptions
         // This ensures proper dependency injection and synchronous cache access
 
-        // Configure events for JWKS integration
+        // Configure events for authentication logging
         options.Events = new JwtBearerEvents
         {
-            OnTokenValidated = context =>
-            {
-                var userId = context.Principal?.FindFirst("sub")?.Value;
-                Log.Information("JWT token validated successfully - UserId: {UserId}", userId);
-                return Task.CompletedTask;
-            },
             OnAuthenticationFailed = context =>
             {
                 Log.Warning("JWT authentication failed: {Error}", context.Exception?.Message);
-                return Task.CompletedTask;
-            },
-            OnChallenge = context =>
-            {
-                Log.Warning("JWT authentication challenge: {Error} - {ErrorDescription}",
-                    context.Error, context.ErrorDescription);
                 return Task.CompletedTask;
             }
         };
