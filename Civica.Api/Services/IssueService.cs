@@ -236,7 +236,11 @@ public class IssueService(
             // Add photos if provided
             if (request.PhotoUrls != null && request.PhotoUrls.Any())
             {
-                List<IssuePhoto> photos = request.PhotoUrls.Select((url, index) => new IssuePhoto
+                var validPhotoUrls = request.PhotoUrls
+                    .Where(url => !string.IsNullOrWhiteSpace(url))
+                    .ToList();
+
+                List<IssuePhoto> photos = validPhotoUrls.Select((url, index) => new IssuePhoto
                 {
                     Id = Guid.NewGuid(),
                     IssueId = issue.Id,
@@ -503,5 +507,401 @@ public class IssueService(
             logger.LogError(ex, "Error getting user issues for {SupabaseUserId}", supabaseUserId);
             throw;
         }
+    }
+
+    public async Task<(bool Success, string? Error)> UpdateIssueStatusAsync(
+        Guid issueId,
+        UpdateIssueStatusRequest request,
+        string supabaseUserId,
+        bool isAdmin = false)
+    {
+        try
+        {
+            // Get user profile
+            UserProfile? userProfile = await context.UserProfiles
+                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
+
+            if (userProfile == null)
+            {
+                return (false, "User profile not found");
+            }
+
+            // Get the issue
+            Issue? issue = await context.Issues
+                .FirstOrDefaultAsync(i => i.Id == issueId);
+
+            if (issue == null)
+            {
+                return (false, "Issue not found");
+            }
+
+            // Check ownership (admins can bypass)
+            if (!isAdmin && issue.UserId != userProfile.Id)
+            {
+                return (false, "You can only change status of your own issues");
+            }
+
+            // Validate the requested status transition
+            var validationError = ValidateStatusTransition(issue.Status, request.Status);
+            if (validationError != null)
+            {
+                return (false, validationError);
+            }
+
+            // Update the status
+            issue.Status = request.Status;
+            issue.UpdatedAt = DateTime.UtcNow;
+
+            await context.SaveChangesAsync();
+
+            logger.LogInformation("Issue {IssueId} status changed to {NewStatus} by user {UserId}",
+                issueId, request.Status, userProfile.Id);
+
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error updating status for issue {IssueId}", issueId);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Validates if a status transition is allowed for users.
+    /// Returns null if valid, or an error message if invalid.
+    /// </summary>
+    private static string? ValidateStatusTransition(IssueStatus currentStatus, IssueStatus newStatus)
+    {
+        // Users can only set these statuses
+        var allowedUserStatuses = new[] { IssueStatus.Cancelled, IssueStatus.Resolved };
+
+        if (!allowedUserStatuses.Contains(newStatus))
+        {
+            return $"Users can only set status to: {string.Join(", ", allowedUserStatuses)}";
+        }
+
+        // Check if already in the target status
+        if (currentStatus == newStatus)
+        {
+            return $"Issue is already {newStatus}";
+        }
+
+        // Cannot transition from terminal states
+        if (currentStatus == IssueStatus.Cancelled)
+        {
+            return "Cannot change status of a cancelled issue";
+        }
+
+        if (currentStatus == IssueStatus.Resolved && newStatus != IssueStatus.Resolved)
+        {
+            return "Cannot change status of a resolved issue";
+        }
+
+        return null; // Valid transition
+    }
+
+    public async Task<(bool Success, IssueDetailResponse? Issue, string? Error)> UpdateIssueAsync(
+        Guid issueId,
+        UpdateIssueRequest request,
+        string supabaseUserId)
+    {
+        var strategy = context.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync<(bool Success, IssueDetailResponse? Issue, string? Error)>(async () =>
+        {
+            using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
+
+            try
+            {
+                // Get user profile
+                UserProfile? userProfile = await context.UserProfiles
+                    .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
+
+                if (userProfile == null)
+                {
+                    return (false, null, "User profile not found");
+                }
+
+                // Get the issue with related data
+                Issue? issue = await context.Issues
+                    .Include(i => i.Photos)
+                    .Include(i => i.IssueAuthorities)
+                    .FirstOrDefaultAsync(i => i.Id == issueId);
+
+                if (issue == null)
+                {
+                    return (false, null, "Issue not found");
+                }
+
+                // Check ownership
+                if (issue.UserId != userProfile.Id)
+                {
+                    return (false, null, "You can only edit your own issues");
+                }
+
+                // Check if the issue can be edited (not Cancelled or Resolved)
+                if (issue.Status == IssueStatus.Cancelled || issue.Status == IssueStatus.Resolved)
+                {
+                    return (false, null, $"Cannot edit an issue with status '{issue.Status}'.");
+                }
+
+                // Track if related entities were modified (photos/authorities)
+                bool hasRelatedChanges = false;
+
+                // Update only provided fields
+                if (request.Title != null)
+                    issue.Title = request.Title;
+
+                if (request.Description != null)
+                    issue.Description = request.Description;
+
+                if (request.Category.HasValue)
+                    issue.Category = request.Category.Value;
+
+                if (request.Address != null)
+                    issue.Address = request.Address;
+
+                if (request.District != null)
+                    issue.District = request.District;
+
+                if (request.Latitude.HasValue)
+                    issue.Latitude = request.Latitude.Value;
+
+                if (request.Longitude.HasValue)
+                    issue.Longitude = request.Longitude.Value;
+
+                if (request.LocationAccuracy.HasValue)
+                    issue.LocationAccuracy = request.LocationAccuracy.Value;
+
+                if (request.Neighborhood != null)
+                    issue.Neighborhood = request.Neighborhood;
+
+                if (request.Landmark != null)
+                    issue.Landmark = request.Landmark;
+
+                if (request.Urgency.HasValue)
+                    issue.Urgency = request.Urgency.Value;
+
+                if (request.EstimatedImpact.HasValue)
+                    issue.EstimatedImpact = request.EstimatedImpact.Value;
+
+                if (request.Tags != null)
+                    issue.Tags = request.Tags.Any() ? string.Join(",", request.Tags) : null;
+
+                if (request.CurrentSituation != null)
+                    issue.CurrentSituation = request.CurrentSituation;
+
+                if (request.DesiredOutcome != null)
+                    issue.DesiredOutcome = request.DesiredOutcome;
+
+                if (request.CommunityImpact != null)
+                    issue.CommunityImpact = request.CommunityImpact;
+
+                if (request.AIGeneratedDescription != null)
+                    issue.AIGeneratedDescription = request.AIGeneratedDescription;
+
+                if (request.AIProposedSolution != null)
+                    issue.AIProposedSolution = request.AIProposedSolution;
+
+                if (request.AIConfidence.HasValue)
+                    issue.AIConfidence = request.AIConfidence.Value;
+
+                // Handle photo updates (replace all if provided)
+                if (request.PhotoUrls != null)
+                {
+                    context.IssuePhotos.RemoveRange(issue.Photos);
+
+                    var validPhotoUrls = request.PhotoUrls
+                        .Where(url => !string.IsNullOrWhiteSpace(url))
+                        .ToList();
+
+                    if (validPhotoUrls.Any())
+                    {
+                        List<IssuePhoto> photos = validPhotoUrls.Select((url, index) => new IssuePhoto
+                        {
+                            Id = Guid.NewGuid(),
+                            IssueId = issue.Id,
+                            Url = url,
+                            IsPrimary = index == 0,
+                            CreatedAt = DateTime.UtcNow
+                        }).ToList();
+
+                        context.IssuePhotos.AddRange(photos);
+                    }
+                    hasRelatedChanges = true;
+                }
+
+                // Handle authority updates (replace all if provided)
+                if (request.Authorities != null)
+                {
+                    // Remove existing authorities
+                    context.IssueAuthorities.RemoveRange(issue.IssueAuthorities);
+
+                    // Add new authorities
+                    if (request.Authorities.Any())
+                    {
+                        var authorities = request.Authorities.Where(a => a != null).ToList();
+
+                        // Check for duplicate AuthorityIds
+                        var predefinedIds = authorities
+                            .Where(a => a.AuthorityId.HasValue)
+                            .Select(a => a.AuthorityId!.Value)
+                            .ToList();
+
+                        if (predefinedIds.Count != predefinedIds.Distinct().Count())
+                        {
+                            await transaction.RollbackAsync();
+                            return (false, null, "Duplicate authority IDs are not allowed");
+                        }
+
+                        // Check for duplicate custom emails
+                        var customEmails = authorities
+                            .Where(a => !a.AuthorityId.HasValue && !string.IsNullOrWhiteSpace(a.CustomEmail))
+                            .Select(a => a.CustomEmail!.ToLowerInvariant())
+                            .ToList();
+
+                        if (customEmails.Count != customEmails.Distinct().Count())
+                        {
+                            await transaction.RollbackAsync();
+                            return (false, null, "Duplicate custom authority emails are not allowed");
+                        }
+
+                        foreach (var authorityInput in authorities)
+                        {
+                            bool hasPredefined = authorityInput.AuthorityId.HasValue;
+                            bool hasCustom = !string.IsNullOrWhiteSpace(authorityInput.CustomName) &&
+                                             !string.IsNullOrWhiteSpace(authorityInput.CustomEmail);
+
+                            if (!hasPredefined && !hasCustom)
+                            {
+                                await transaction.RollbackAsync();
+                                return (false, null, "Each authority must have either an AuthorityId or both CustomName and CustomEmail");
+                            }
+
+                            if (hasPredefined && hasCustom)
+                            {
+                                await transaction.RollbackAsync();
+                                return (false, null, "Authority cannot have both AuthorityId and custom fields");
+                            }
+
+                            if (hasPredefined)
+                            {
+                                bool authorityExists = await context.Authorities
+                                    .AnyAsync(a => a.Id == authorityInput.AuthorityId && a.IsActive);
+
+                                if (!authorityExists)
+                                {
+                                    await transaction.RollbackAsync();
+                                    return (false, null, $"Authority with ID {authorityInput.AuthorityId} not found or is inactive");
+                                }
+                            }
+
+                            IssueAuthority issueAuthority = new()
+                            {
+                                Id = Guid.NewGuid(),
+                                IssueId = issue.Id,
+                                AuthorityId = authorityInput.AuthorityId,
+                                CustomName = hasPredefined ? null : authorityInput.CustomName,
+                                CustomEmail = hasPredefined ? null : authorityInput.CustomEmail,
+                                CreatedAt = DateTime.UtcNow
+                            };
+
+                            context.IssueAuthorities.Add(issueAuthority);
+                        }
+                    }
+                    hasRelatedChanges = true;
+                }
+
+                // Use EF Core change tracker to detect if the issue entity was modified
+                bool hasEntityChanges = context.Entry(issue).State == EntityState.Modified;
+
+                // Only proceed if there were actual changes
+                if (!hasEntityChanges && !hasRelatedChanges)
+                {
+                    await transaction.RollbackAsync();
+                    return (false, null, "No changes provided");
+                }
+
+                // Set status to UnderReview for admin re-approval
+                issue.Status = IssueStatus.UnderReview;
+                issue.UpdatedAt = DateTime.UtcNow;
+
+                await context.SaveChangesAsync();
+
+                // Reload the issue with all relations BEFORE committing
+                // This ensures we can rollback if the reload fails
+                await context.Entry(issue).Reference(i => i.User).LoadAsync();
+                await context.Entry(issue).Collection(i => i.Photos).LoadAsync();
+                await context.Entry(issue).Collection(i => i.IssueAuthorities).LoadAsync();
+
+                // Load Authority for each IssueAuthority
+                foreach (var ia in issue.IssueAuthorities.Where(ia => ia.AuthorityId.HasValue))
+                {
+                    await context.Entry(ia).Reference(x => x.Authority).LoadAsync();
+                }
+
+                // Build response before committing
+                var response = new IssueDetailResponse
+                {
+                    Id = issue.Id,
+                    Title = issue.Title,
+                    Description = issue.Description,
+                    Category = issue.Category,
+                    Address = issue.Address,
+                    Latitude = issue.Latitude,
+                    Longitude = issue.Longitude,
+                    Neighborhood = issue.Neighborhood,
+                    District = issue.District,
+                    Landmark = issue.Landmark,
+                    Urgency = issue.Urgency,
+                    EstimatedImpact = issue.EstimatedImpact,
+                    Tags = issue.Tags?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList(),
+                    Status = issue.Status,
+                    EmailsSent = issue.EmailsSent,
+                    CurrentSituation = issue.CurrentSituation,
+                    DesiredOutcome = issue.DesiredOutcome,
+                    CommunityImpact = issue.CommunityImpact,
+                    AIGeneratedDescription = issue.AIGeneratedDescription,
+                    AIProposedSolution = issue.AIProposedSolution,
+                    PublicVisibility = issue.PublicVisibility,
+                    CreatedAt = issue.CreatedAt,
+                    UpdatedAt = issue.UpdatedAt,
+                    Photos = issue.Photos.Select(p => new IssuePhotoResponse
+                    {
+                        Id = p.Id,
+                        Url = p.Url,
+                        Description = p.Description,
+                        IsPrimary = p.IsPrimary,
+                        CreatedAt = p.CreatedAt
+                    }).ToList(),
+                    Authorities = issue.IssueAuthorities.Select(ia => new IssueAuthorityResponse
+                    {
+                        AuthorityId = ia.AuthorityId,
+                        Name = ia.Authority?.Name ?? ia.CustomName ?? string.Empty,
+                        Email = ia.Authority?.Email ?? ia.CustomEmail ?? string.Empty,
+                        IsPredefined = ia.AuthorityId.HasValue
+                    }).ToList(),
+                    User = new UserBasicResponse
+                    {
+                        Id = issue.User.Id,
+                        Name = issue.User.DisplayName,
+                        PhotoUrl = issue.User.PhotoUrl
+                    }
+                };
+
+                // Commit only after everything is ready
+                await transaction.CommitAsync();
+
+                logger.LogInformation("Issue {IssueId} updated and set to UnderReview by user {UserId}", issueId, userProfile.Id);
+
+                return (true, response, null);
+            }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync();
+                logger.LogError(ex, "Error updating issue {IssueId}", issueId);
+                throw;
+            }
+        });
     }
 }
