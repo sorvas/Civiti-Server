@@ -236,6 +236,7 @@ public static class UserEndpoints
                 return error switch
                 {
                     "Issue not found" => Results.NotFound(new { error }),
+                    "User profile not found" => Results.NotFound(new { error }),
                     "You can only change status of your own issues" => Results.Forbid(),
                     _ => Results.BadRequest(new { error })
                 };
@@ -272,6 +273,7 @@ public static class UserEndpoints
                 return error switch
                 {
                     "Issue not found" => Results.NotFound(new { error }),
+                    "User profile not found" => Results.NotFound(new { error }),
                     "You can only edit your own issues" => Results.Forbid(),
                     _ => Results.BadRequest(new { error })
                 };
