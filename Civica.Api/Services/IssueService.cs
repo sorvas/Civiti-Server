@@ -344,6 +344,24 @@ public class IssueService(
                 "issues_reported",
                 1);
 
+            // Update quality_photos achievement if issue has 3+ photos
+            var photoCount = request.PhotoUrls?.Count(url => !string.IsNullOrWhiteSpace(url)) ?? 0;
+            if (photoCount >= 3)
+            {
+                // Count total issues with 3+ photos for this user (including this new one)
+                var qualityPhotoIssueCount = await context.Issues
+                    .Where(i => i.UserId == userProfile.Id && i.Photos.Count >= 3)
+                    .CountAsync();
+                // Add 1 for the current issue which hasn't been committed yet
+                qualityPhotoIssueCount++;
+
+                await gamificationService.UpdateAchievementProgressAsync(
+                    userProfile.Id,
+                    "quality_photos",
+                    qualityPhotoIssueCount,
+                    isAbsolute: true);
+            }
+
             // Check for badge eligibility based on new stats
             await gamificationService.CheckAndAwardBadgesAsync(userProfile.Id);
 

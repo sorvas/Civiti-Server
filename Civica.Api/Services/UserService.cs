@@ -82,7 +82,10 @@ public class UserService(
             }
 
             // Track login streak (once per day)
-            await UpdateLoginStreakAsync(user);
+            await UpdateLoginStreakAsync(user.Id);
+
+            // Reload user to get updated streak values after potential modification
+            user = (await context.UserProfiles.FirstOrDefaultAsync(u => u.Id == user.Id))!;
 
             UserGamificationResponse gamification = await GetUserGamificationAsync(supabaseUserId);
 
@@ -114,18 +117,10 @@ public class UserService(
         }
     }
 
-    private async Task UpdateLoginStreakAsync(UserProfile user)
+    private async Task UpdateLoginStreakAsync(Guid userId)
     {
-        var today = DateTime.UtcNow.Date;
-        var lastActivityDate = user.LastActivityDate.Date;
-
-        // Skip if already updated today
-        if (lastActivityDate == today)
-        {
-            return;
-        }
-
         // Use execution strategy to handle transient failures
+        // Re-fetch user inside callback to ensure fresh data on retry
         var strategy = context.Database.CreateExecutionStrategy();
 
         await strategy.ExecuteAsync(async () =>
@@ -134,6 +129,23 @@ public class UserService(
 
             try
             {
+                // Re-fetch user inside execution strategy to get fresh data on retry
+                UserProfile? user = await context.UserProfiles.FirstOrDefaultAsync(u => u.Id == userId);
+                if (user == null)
+                {
+                    logger.LogWarning("User {UserId} not found for login streak update", userId);
+                    return;
+                }
+
+                var today = DateTime.UtcNow.Date;
+                var lastActivityDate = user.LastActivityDate.Date;
+
+                // Skip if already updated today
+                if (lastActivityDate == today)
+                {
+                    return;
+                }
+
                 var previousStreak = user.CurrentLoginStreak;
 
                 // Check if this is a consecutive day
@@ -178,7 +190,7 @@ public class UserService(
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
-                logger.LogError(ex, "Error updating login streak for user {UserId}", user.Id);
+                logger.LogError(ex, "Error updating login streak for user {UserId}", userId);
                 throw;
             }
         });
