@@ -30,8 +30,8 @@ public class GamificationService(
                 user.Level = newLevel;
                 logger.LogInformation("User {UserId} leveled up to {Level}", userId, newLevel);
 
-                // Award level up achievement
-                await UpdateAchievementProgressAsync(userId, "level_up", newLevel);
+                // Award level up achievement (use absolute progress to set level directly)
+                await UpdateAchievementProgressAsync(userId, "level_up", newLevel, isAbsolute: true);
             }
 
             user.UpdatedAt = DateTime.UtcNow;

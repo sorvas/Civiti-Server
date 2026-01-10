@@ -31,7 +31,7 @@ public class IssueService(
             IQueryable<Issue> query = context.Issues
                 .Include(i => i.Photos)
                 .Include(i => i.User)
-                .Where(i => i.Status == IssueStatus.Active && i.PublicVisibility)
+                .Where(i => i.Status == IssueStatus.Approved && i.PublicVisibility)
                 .AsQueryable();
 
             // Apply filters
@@ -569,32 +569,40 @@ public class IssueService(
                 issue.Status = request.Status;
                 issue.UpdatedAt = DateTime.UtcNow;
 
-                // If status changed to Resolved, update gamification
+                // If status changed to Resolved, update gamification for the issue OWNER (not the caller)
                 if (request.Status == IssueStatus.Resolved && previousStatus != IssueStatus.Resolved)
                 {
-                    userProfile.IssuesResolved++;
-                    userProfile.UpdatedAt = DateTime.UtcNow;
+                    // Get the issue owner's profile to update their stats
+                    UserProfile? issueOwner = issue.UserId == userProfile.Id
+                        ? userProfile
+                        : await context.UserProfiles.FindAsync(issue.UserId);
+
+                    if (issueOwner != null)
+                    {
+                        issueOwner.IssuesResolved++;
+                        issueOwner.UpdatedAt = DateTime.UtcNow;
+                    }
                 }
 
                 await context.SaveChangesAsync();
 
-                // Award points and check achievements for resolution
+                // Award points and check achievements for resolution (to the issue OWNER)
                 if (request.Status == IssueStatus.Resolved && previousStatus != IssueStatus.Resolved)
                 {
-                    // Award 100 points for resolving an issue
+                    // Award 100 points for resolving an issue to the issue owner
                     await gamificationService.AwardPointsAsync(
-                        userProfile.Id,
+                        issue.UserId,
                         100,
                         "Issue resolved");
 
                     // Update achievement progress for issues_resolved
                     await gamificationService.UpdateAchievementProgressAsync(
-                        userProfile.Id,
+                        issue.UserId,
                         "issues_resolved",
                         1);
 
                     // Check for badge eligibility
-                    await gamificationService.CheckAndAwardBadgesAsync(userProfile.Id);
+                    await gamificationService.CheckAndAwardBadgesAsync(issue.UserId);
                 }
 
                 await transaction.CommitAsync();
