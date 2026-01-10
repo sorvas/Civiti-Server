@@ -279,8 +279,8 @@ public class AdminService(
 
             context.AdminActions.Add(adminAction);
 
-            // Award points to user
-            await gamificationService.AwardPointsAsync(issue.UserId, 100, $"Issue approved: {issue.Title}");
+            // Award points to user (50 points for approval)
+            await gamificationService.AwardPointsAsync(issue.UserId, 50, $"Issue approved: {issue.Title}");
             
             // Update achievement progress
             await gamificationService.UpdateAchievementProgressAsync(issue.UserId, "issues_approved", 1);

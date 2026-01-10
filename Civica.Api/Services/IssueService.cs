@@ -31,7 +31,7 @@ public class IssueService(
             IQueryable<Issue> query = context.Issues
                 .Include(i => i.Photos)
                 .Include(i => i.User)
-                .Where(i => i.Status == IssueStatus.Approved && i.PublicVisibility)
+                .Where(i => i.Status == IssueStatus.Active && i.PublicVisibility)
                 .AsQueryable();
 
             // Apply filters
@@ -326,16 +326,26 @@ public class IssueService(
                 }
             }
 
+            // Update user stats
+            userProfile.IssuesReported++;
+            userProfile.UpdatedAt = DateTime.UtcNow;
+
             await context.SaveChangesAsync();
 
-            // Award points for creating an issue
+            // Award points for creating an issue (10 points for submission)
             await gamificationService.AwardPointsAsync(
-                userProfile.Id, 
-                50, 
+                userProfile.Id,
+                10,
                 "Reported a new community issue");
 
-            // Check for achievements
-            await gamificationService.CheckAndAwardAchievementsAsync(userProfile.Id);
+            // Update achievement progress for issues_reported
+            await gamificationService.UpdateAchievementProgressAsync(
+                userProfile.Id,
+                "issues_reported",
+                1);
+
+            // Check for badge eligibility based on new stats
+            await gamificationService.CheckAndAwardBadgesAsync(userProfile.Id);
 
             await transaction.CommitAsync();
 
@@ -515,55 +525,92 @@ public class IssueService(
         string supabaseUserId,
         bool isAdmin = false)
     {
-        try
+        var strategy = context.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync(async () =>
         {
-            // Get user profile
-            UserProfile? userProfile = await context.UserProfiles
-                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
+            using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
 
-            if (userProfile == null)
+            try
             {
-                return (false, "User profile not found");
+                // Get user profile
+                UserProfile? userProfile = await context.UserProfiles
+                    .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
+
+                if (userProfile == null)
+                {
+                    return (false, "User profile not found");
+                }
+
+                // Get the issue
+                Issue? issue = await context.Issues
+                    .FirstOrDefaultAsync(i => i.Id == issueId);
+
+                if (issue == null)
+                {
+                    return (false, "Issue not found");
+                }
+
+                // Check ownership (admins can bypass)
+                if (!isAdmin && issue.UserId != userProfile.Id)
+                {
+                    return (false, "You can only change status of your own issues");
+                }
+
+                // Validate the requested status transition
+                var validationError = ValidateStatusTransition(issue.Status, request.Status);
+                if (validationError != null)
+                {
+                    return (false, validationError);
+                }
+
+                // Update the status
+                var previousStatus = issue.Status;
+                issue.Status = request.Status;
+                issue.UpdatedAt = DateTime.UtcNow;
+
+                // If status changed to Resolved, update gamification
+                if (request.Status == IssueStatus.Resolved && previousStatus != IssueStatus.Resolved)
+                {
+                    userProfile.IssuesResolved++;
+                    userProfile.UpdatedAt = DateTime.UtcNow;
+                }
+
+                await context.SaveChangesAsync();
+
+                // Award points and check achievements for resolution
+                if (request.Status == IssueStatus.Resolved && previousStatus != IssueStatus.Resolved)
+                {
+                    // Award 100 points for resolving an issue
+                    await gamificationService.AwardPointsAsync(
+                        userProfile.Id,
+                        100,
+                        "Issue resolved");
+
+                    // Update achievement progress for issues_resolved
+                    await gamificationService.UpdateAchievementProgressAsync(
+                        userProfile.Id,
+                        "issues_resolved",
+                        1);
+
+                    // Check for badge eligibility
+                    await gamificationService.CheckAndAwardBadgesAsync(userProfile.Id);
+                }
+
+                await transaction.CommitAsync();
+
+                logger.LogInformation("Issue {IssueId} status changed to {NewStatus} by user {UserId}",
+                    issueId, request.Status, userProfile.Id);
+
+                return (true, null);
             }
-
-            // Get the issue
-            Issue? issue = await context.Issues
-                .FirstOrDefaultAsync(i => i.Id == issueId);
-
-            if (issue == null)
+            catch (Exception ex)
             {
-                return (false, "Issue not found");
+                await transaction.RollbackAsync();
+                logger.LogError(ex, "Error updating status for issue {IssueId}", issueId);
+                throw;
             }
-
-            // Check ownership (admins can bypass)
-            if (!isAdmin && issue.UserId != userProfile.Id)
-            {
-                return (false, "You can only change status of your own issues");
-            }
-
-            // Validate the requested status transition
-            var validationError = ValidateStatusTransition(issue.Status, request.Status);
-            if (validationError != null)
-            {
-                return (false, validationError);
-            }
-
-            // Update the status
-            issue.Status = request.Status;
-            issue.UpdatedAt = DateTime.UtcNow;
-
-            await context.SaveChangesAsync();
-
-            logger.LogInformation("Issue {IssueId} status changed to {NewStatus} by user {UserId}",
-                issueId, request.Status, userProfile.Id);
-
-            return (true, null);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error updating status for issue {IssueId}", issueId);
-            throw;
-        }
+        });
     }
 
     /// <summary>

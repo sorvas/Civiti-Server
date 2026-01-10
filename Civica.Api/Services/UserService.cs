@@ -72,7 +72,6 @@ public class UserService(
         try
         {
             UserProfile? user = await context.UserProfiles
-                .AsNoTracking()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
@@ -80,6 +79,9 @@ public class UserService(
                 logger.LogWarning("User not found for Supabase ID: {SupabaseUserId}", supabaseUserId);
                 return null;
             }
+
+            // Track login streak (once per day)
+            await UpdateLoginStreakAsync(user);
 
             UserGamificationResponse gamification = await GetUserGamificationAsync(supabaseUserId);
 
@@ -109,6 +111,56 @@ public class UserService(
             logger.LogError(ex, "Error getting user profile for Supabase ID: {SupabaseUserId}", supabaseUserId);
             throw new InvalidOperationException($"Failed to get user profile for Supabase ID: {supabaseUserId}", ex);
         }
+    }
+
+    private async Task UpdateLoginStreakAsync(UserProfile user)
+    {
+        var today = DateTime.UtcNow.Date;
+        var lastActivityDate = user.LastActivityDate.Date;
+
+        // Skip if already updated today
+        if (lastActivityDate == today)
+        {
+            return;
+        }
+
+        var previousStreak = user.CurrentLoginStreak;
+
+        // Check if this is a consecutive day
+        if (lastActivityDate == today.AddDays(-1))
+        {
+            // Consecutive day - increment streak
+            user.CurrentLoginStreak++;
+            logger.LogInformation("User {UserId} login streak incremented to {Streak}", user.Id, user.CurrentLoginStreak);
+        }
+        else
+        {
+            // Streak broken - reset to 1
+            user.CurrentLoginStreak = 1;
+            logger.LogInformation("User {UserId} login streak reset to 1 (was {PreviousStreak})", user.Id, previousStreak);
+        }
+
+        // Update longest streak if current exceeds it
+        if (user.CurrentLoginStreak > user.LongestLoginStreak)
+        {
+            user.LongestLoginStreak = user.CurrentLoginStreak;
+        }
+
+        // Update last activity date
+        user.LastActivityDate = DateTime.UtcNow;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        await context.SaveChangesAsync();
+
+        // Update achievement progress for login_streak (absolute value, not incremental)
+        await gamificationService.UpdateAchievementProgressAsync(
+            user.Id,
+            "login_streak",
+            user.CurrentLoginStreak,
+            isAbsolute: true);
+
+        // Check for badge eligibility
+        await gamificationService.CheckAndAwardBadgesAsync(user.Id);
     }
 
     public async Task<UserProfileResponse> CreateUserProfileAsync(CreateUserProfileRequest request, string supabaseUserId, string email)
