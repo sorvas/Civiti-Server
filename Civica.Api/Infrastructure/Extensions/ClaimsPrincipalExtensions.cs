@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace Civica.Api.Infrastructure.Extensions;
 
@@ -26,10 +27,42 @@ public static class ClaimsPrincipalExtensions
     }
 
     /// <summary>
-    /// Checks if the user has admin role.
+    /// Checks if the user has admin role from app_metadata.
+    /// Supabase stores custom claims in app_metadata, not as top-level JWT claims.
     /// </summary>
     public static bool IsAdmin(this ClaimsPrincipal user)
     {
-        return user.HasClaim("role", "admin");
+        return GetRole(user) == "admin";
+    }
+
+    /// <summary>
+    /// Gets the user's role from Supabase app_metadata.
+    /// Supabase JWT structure: { "app_metadata": { "role": "admin" } }
+    /// Returns "user" if no custom role is set.
+    /// Note: The top-level "role" claim in Supabase is "authenticated"/"anon" (system use).
+    /// </summary>
+    public static string GetRole(this ClaimsPrincipal user)
+    {
+        var appMetadata = user.FindFirst("app_metadata")?.Value;
+        if (!string.IsNullOrEmpty(appMetadata))
+        {
+            try
+            {
+                using var metadata = JsonDocument.Parse(appMetadata);
+                // Verify root is an object before calling TryGetProperty
+                if (metadata.RootElement.ValueKind == JsonValueKind.Object
+                    && metadata.RootElement.TryGetProperty("role", out var roleElement)
+                    && roleElement.ValueKind == JsonValueKind.String)
+                {
+                    return roleElement.GetString() ?? "user";
+                }
+            }
+            catch (JsonException)
+            {
+                // Invalid JSON, fall through to default
+            }
+        }
+
+        return "user";
     }
 }

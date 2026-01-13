@@ -505,16 +505,17 @@ public class AdminService(
                 "30d" => now.AddDays(-30),
                 "90d" => now.AddDays(-90),
                 "1y" => now.AddYears(-1),
-                _ => DateTime.MinValue
+                _ => DateTime.MinValue.ToUniversalTime()
             };
 
-            DateTime today = now.Date;
-            DateTime weekStart = now.AddDays(-(int)now.DayOfWeek).Date;
-            DateTime monthStart = new(now.Year, now.Month, 1);
+            // PostgreSQL requires DateTimeKind.Utc for timestamp with time zone
+            DateTime today = DateTime.SpecifyKind(now.Date, DateTimeKind.Utc);
+            DateTime weekStart = DateTime.SpecifyKind(now.AddDays(-(int)now.DayOfWeek).Date, DateTimeKind.Utc);
+            DateTime monthStart = DateTime.SpecifyKind(new DateTime(now.Year, now.Month, 1), DateTimeKind.Utc);
 
             // Get all issues for counting
             List<Issue> allIssues = await context.Issues.ToListAsync();
-            List<Issue> periodIssues = startDate != DateTime.MinValue 
+            List<Issue> periodIssues = startDate != DateTime.MinValue.ToUniversalTime()
                 ? allIssues.Where(i => i.CreatedAt >= startDate).ToList()
                 : allIssues;
 
@@ -717,9 +718,11 @@ public class AdminService(
                 .Where(aa => aa.AdminUserId == adminUser.Id)
                 .ToListAsync();
 
-            DateTime today = DateTime.UtcNow.Date;
-            DateTime weekStart = DateTime.UtcNow.AddDays(-(int)DateTime.UtcNow.DayOfWeek).Date;
-            DateTime monthStart = new(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
+            // PostgreSQL requires DateTimeKind.Utc for timestamp with time zone
+            DateTime now = DateTime.UtcNow;
+            DateTime today = DateTime.SpecifyKind(now.Date, DateTimeKind.Utc);
+            DateTime weekStart = DateTime.SpecifyKind(now.AddDays(-(int)now.DayOfWeek).Date, DateTimeKind.Utc);
+            DateTime monthStart = DateTime.SpecifyKind(new DateTime(now.Year, now.Month, 1), DateTimeKind.Utc);
 
             // Calculate average review time
             List<Issue> reviewedIssues = await context.Issues
