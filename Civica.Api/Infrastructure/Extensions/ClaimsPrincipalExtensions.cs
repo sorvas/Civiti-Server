@@ -49,7 +49,9 @@ public static class ClaimsPrincipalExtensions
             try
             {
                 using var metadata = JsonDocument.Parse(appMetadata);
-                if (metadata.RootElement.TryGetProperty("role", out var roleElement)
+                // Verify root is an object before calling TryGetProperty
+                if (metadata.RootElement.ValueKind == JsonValueKind.Object
+                    && metadata.RootElement.TryGetProperty("role", out var roleElement)
                     && roleElement.ValueKind == JsonValueKind.String)
                 {
                     return roleElement.GetString() ?? "user";
