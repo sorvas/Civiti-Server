@@ -14,6 +14,7 @@ using Civica.Api.Services;
 using Civica.Api.Infrastructure.Middleware;
 using Civica.Api.Infrastructure.Constants;
 using Civica.Api.Infrastructure.Configuration;
+using Civica.Api.Infrastructure.Extensions;
 using Civica.Api.Endpoints;
 using Swashbuckle.AspNetCore.Filters;
 
@@ -235,9 +236,9 @@ builder.Services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>, Civica.Ap
 
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy(AuthorizationPolicies.AdminOnly, policy =>
-        policy.RequireClaim(AuthorizationPolicies.Claims.Role, AuthorizationPolicies.Roles.Admin))
+        policy.RequireAssertion(context => context.User.IsAdmin()))
     .AddPolicy(AuthorizationPolicies.UserOnly, policy =>
-        policy.RequireClaim(AuthorizationPolicies.Claims.Role, AuthorizationPolicies.Roles.User));
+        policy.RequireAuthenticatedUser());
 
 // CORS
 builder.Services.AddCors(options =>
