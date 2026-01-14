@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Civica.Api.Migrations
 {
     [DbContext(typeof(CivicaDbContext))]
-    [Migration("20260114130640_InitialCreate")]
+    [Migration("20260114150845_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -314,8 +314,8 @@ namespace Civica.Api.Migrations
                         new
                         {
                             Id = new Guid("a0000001-0000-0000-0000-000000000001"),
-                            City = "",
-                            County = "",
+                            City = "București",
+                            County = "București",
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Email = "pmb@pmb.ro",
                             IsActive = true,
@@ -324,9 +324,10 @@ namespace Civica.Api.Migrations
                         new
                         {
                             Id = new Guid("a0000001-0000-0000-0000-000000000002"),
-                            City = "",
-                            County = "",
+                            City = "București",
+                            County = "București",
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            District = "Sector 1",
                             Email = "primarie@primarias1.ro",
                             IsActive = true,
                             Name = "Primăria Sectorului 1 București"
@@ -334,9 +335,10 @@ namespace Civica.Api.Migrations
                         new
                         {
                             Id = new Guid("a0000001-0000-0000-0000-000000000003"),
-                            City = "",
-                            County = "",
+                            City = "București",
+                            County = "București",
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            District = "Sector 2",
                             Email = "primarie@ps2.ro",
                             IsActive = true,
                             Name = "Primăria Sectorului 2 București"
@@ -344,9 +346,10 @@ namespace Civica.Api.Migrations
                         new
                         {
                             Id = new Guid("a0000001-0000-0000-0000-000000000004"),
-                            City = "",
-                            County = "",
+                            City = "București",
+                            County = "București",
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            District = "Sector 3",
                             Email = "primarie@primarie3.ro",
                             IsActive = true,
                             Name = "Primăria Sectorului 3 București"
@@ -354,9 +357,10 @@ namespace Civica.Api.Migrations
                         new
                         {
                             Id = new Guid("a0000001-0000-0000-0000-000000000005"),
-                            City = "",
-                            County = "",
+                            City = "București",
+                            County = "București",
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            District = "Sector 4",
                             Email = "primarie@ps4.ro",
                             IsActive = true,
                             Name = "Primăria Sectorului 4 București"
@@ -364,9 +368,10 @@ namespace Civica.Api.Migrations
                         new
                         {
                             Id = new Guid("a0000001-0000-0000-0000-000000000006"),
-                            City = "",
-                            County = "",
+                            City = "București",
+                            County = "București",
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            District = "Sector 5",
                             Email = "primarie@sector5.ro",
                             IsActive = true,
                             Name = "Primăria Sectorului 5 București"
@@ -374,9 +379,10 @@ namespace Civica.Api.Migrations
                         new
                         {
                             Id = new Guid("a0000001-0000-0000-0000-000000000007"),
-                            City = "",
-                            County = "",
+                            City = "București",
+                            County = "București",
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            District = "Sector 6",
                             Email = "primarie@primarie6.ro",
                             IsActive = true,
                             Name = "Primăria Sectorului 6 București"
@@ -384,8 +390,8 @@ namespace Civica.Api.Migrations
                         new
                         {
                             Id = new Guid("a0000002-0000-0000-0000-000000000001"),
-                            City = "",
-                            County = "",
+                            City = "Cluj-Napoca",
+                            County = "Cluj",
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Email = "primarie@primariaclujnapoca.ro",
                             IsActive = true,
@@ -394,8 +400,8 @@ namespace Civica.Api.Migrations
                         new
                         {
                             Id = new Guid("a0000002-0000-0000-0000-000000000002"),
-                            City = "",
-                            County = "",
+                            City = "Timișoara",
+                            County = "Timiș",
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Email = "primarie@primariatm.ro",
                             IsActive = true,
@@ -404,8 +410,8 @@ namespace Civica.Api.Migrations
                         new
                         {
                             Id = new Guid("a0000002-0000-0000-0000-000000000003"),
-                            City = "",
-                            County = "",
+                            City = "Iași",
+                            County = "Iași",
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Email = "primarie@primaria-iasi.ro",
                             IsActive = true,
@@ -414,8 +420,8 @@ namespace Civica.Api.Migrations
                         new
                         {
                             Id = new Guid("a0000002-0000-0000-0000-000000000004"),
-                            City = "",
-                            County = "",
+                            City = "Constanța",
+                            County = "Constanța",
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Email = "primarie@primaria-constanta.ro",
                             IsActive = true,
@@ -424,8 +430,8 @@ namespace Civica.Api.Migrations
                         new
                         {
                             Id = new Guid("a0000002-0000-0000-0000-000000000005"),
-                            City = "",
-                            County = "",
+                            City = "Brașov",
+                            County = "Brașov",
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Email = "primarie@brasovcity.ro",
                             IsActive = true,

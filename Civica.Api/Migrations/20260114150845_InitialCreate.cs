@@ -313,18 +313,18 @@ namespace Civica.Api.Migrations
                 columns: new[] { "Id", "City", "County", "CreatedAt", "District", "Email", "IsActive", "Name" },
                 values: new object[,]
                 {
-                    { new Guid("a0000001-0000-0000-0000-000000000001"), "", "", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "pmb@pmb.ro", true, "Primăria Municipiului București" },
-                    { new Guid("a0000001-0000-0000-0000-000000000002"), "", "", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@primarias1.ro", true, "Primăria Sectorului 1 București" },
-                    { new Guid("a0000001-0000-0000-0000-000000000003"), "", "", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@ps2.ro", true, "Primăria Sectorului 2 București" },
-                    { new Guid("a0000001-0000-0000-0000-000000000004"), "", "", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@primarie3.ro", true, "Primăria Sectorului 3 București" },
-                    { new Guid("a0000001-0000-0000-0000-000000000005"), "", "", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@ps4.ro", true, "Primăria Sectorului 4 București" },
-                    { new Guid("a0000001-0000-0000-0000-000000000006"), "", "", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@sector5.ro", true, "Primăria Sectorului 5 București" },
-                    { new Guid("a0000001-0000-0000-0000-000000000007"), "", "", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@primarie6.ro", true, "Primăria Sectorului 6 București" },
-                    { new Guid("a0000002-0000-0000-0000-000000000001"), "", "", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@primariaclujnapoca.ro", true, "Primăria Municipiului Cluj-Napoca" },
-                    { new Guid("a0000002-0000-0000-0000-000000000002"), "", "", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@primariatm.ro", true, "Primăria Municipiului Timișoara" },
-                    { new Guid("a0000002-0000-0000-0000-000000000003"), "", "", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@primaria-iasi.ro", true, "Primăria Municipiului Iași" },
-                    { new Guid("a0000002-0000-0000-0000-000000000004"), "", "", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@primaria-constanta.ro", true, "Primăria Municipiului Constanța" },
-                    { new Guid("a0000002-0000-0000-0000-000000000005"), "", "", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@brasovcity.ro", true, "Primăria Municipiului Brașov" }
+                    { new Guid("a0000001-0000-0000-0000-000000000001"), "București", "București", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "pmb@pmb.ro", true, "Primăria Municipiului București" },
+                    { new Guid("a0000001-0000-0000-0000-000000000002"), "București", "București", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), "Sector 1", "primarie@primarias1.ro", true, "Primăria Sectorului 1 București" },
+                    { new Guid("a0000001-0000-0000-0000-000000000003"), "București", "București", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), "Sector 2", "primarie@ps2.ro", true, "Primăria Sectorului 2 București" },
+                    { new Guid("a0000001-0000-0000-0000-000000000004"), "București", "București", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), "Sector 3", "primarie@primarie3.ro", true, "Primăria Sectorului 3 București" },
+                    { new Guid("a0000001-0000-0000-0000-000000000005"), "București", "București", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), "Sector 4", "primarie@ps4.ro", true, "Primăria Sectorului 4 București" },
+                    { new Guid("a0000001-0000-0000-0000-000000000006"), "București", "București", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), "Sector 5", "primarie@sector5.ro", true, "Primăria Sectorului 5 București" },
+                    { new Guid("a0000001-0000-0000-0000-000000000007"), "București", "București", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), "Sector 6", "primarie@primarie6.ro", true, "Primăria Sectorului 6 București" },
+                    { new Guid("a0000002-0000-0000-0000-000000000001"), "Cluj-Napoca", "Cluj", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@primariaclujnapoca.ro", true, "Primăria Municipiului Cluj-Napoca" },
+                    { new Guid("a0000002-0000-0000-0000-000000000002"), "Timișoara", "Timiș", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@primariatm.ro", true, "Primăria Municipiului Timișoara" },
+                    { new Guid("a0000002-0000-0000-0000-000000000003"), "Iași", "Iași", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@primaria-iasi.ro", true, "Primăria Municipiului Iași" },
+                    { new Guid("a0000002-0000-0000-0000-000000000004"), "Constanța", "Constanța", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@primaria-constanta.ro", true, "Primăria Municipiului Constanța" },
+                    { new Guid("a0000002-0000-0000-0000-000000000005"), "Brașov", "Brașov", new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), null, "primarie@brasovcity.ro", true, "Primăria Municipiului Brașov" }
                 });
 
             migrationBuilder.InsertData(

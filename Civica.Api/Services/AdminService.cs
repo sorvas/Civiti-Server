@@ -262,12 +262,11 @@ public class AdminService(
                 CreatedAt = DateTime.UtcNow
             });
 
-            // Award points to user (50 points for approval)
-            await gamificationService.AwardPointsAsync(issue.UserId, 50, $"Issue approved: {issue.Title}");
+            // Award points and badges (don't save yet - accumulate all changes)
+            await gamificationService.AwardPointsAsync(issue.UserId, 50, $"Issue approved: {issue.Title}", saveChanges: false);
+            await gamificationService.CheckAndAwardBadgesAsync(issue.UserId, saveChanges: false);
 
-            // Check for new badges
-            await gamificationService.CheckAndAwardBadgesAsync(issue.UserId);
-
+            // Single atomic save for all changes (issue, admin action, points, badges)
             await context.SaveChangesAsync();
 
             logger.LogInformation(

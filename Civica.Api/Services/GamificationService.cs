@@ -10,7 +10,7 @@ public class GamificationService(
     ILogger<GamificationService> logger,
     CivicaDbContext context) : IGamificationService
 {
-    public async Task AwardPointsAsync(Guid userId, int points, string reason)
+    public async Task AwardPointsAsync(Guid userId, int points, string reason, bool saveChanges = true)
     {
         try
         {
@@ -31,11 +31,15 @@ public class GamificationService(
                 logger.LogInformation("User {UserId} leveled up to {Level}", userId, newLevel);
 
                 // Award level up achievement (use absolute progress to set level directly)
-                await UpdateAchievementProgressAsync(userId, "level_up", newLevel, isAbsolute: true);
+                await UpdateAchievementProgressAsync(userId, "level_up", newLevel, isAbsolute: true, saveChanges: false);
             }
 
             user.UpdatedAt = DateTime.UtcNow;
-            await context.SaveChangesAsync();
+
+            if (saveChanges)
+            {
+                await context.SaveChangesAsync();
+            }
 
             logger.LogInformation("Awarded {Points} points to user {UserId} for {Reason}", points, userId, reason);
         }
@@ -46,7 +50,7 @@ public class GamificationService(
         }
     }
 
-    public async Task CheckAndAwardBadgesAsync(Guid userId)
+    public async Task CheckAndAwardBadgesAsync(Guid userId, bool saveChanges = true)
     {
         try
         {
@@ -94,7 +98,7 @@ public class GamificationService(
                     earnedBadgeIds.Add(badge.Id);
                     logger.LogInformation("User {UserId} earned badge {BadgeName}", userId, badge.Name);
 
-                    // Award points for earning badge
+                    // Award points for earning badge (don't save yet)
                     var badgePoints = badge.Rarity switch
                     {
                         BadgeRarity.Common => 50,
@@ -105,11 +109,14 @@ public class GamificationService(
                         _ => 50
                     };
 
-                    await AwardPointsAsync(userId, badgePoints, $"Earned badge: {badge.Name}");
+                    await AwardPointsAsync(userId, badgePoints, $"Earned badge: {badge.Name}", saveChanges: false);
                 }
             }
 
-            await context.SaveChangesAsync();
+            if (saveChanges)
+            {
+                await context.SaveChangesAsync();
+            }
         }
         catch (Exception ex)
         {
@@ -118,7 +125,7 @@ public class GamificationService(
         }
     }
 
-    public async Task CheckAndAwardAchievementsAsync(Guid userId)
+    public async Task CheckAndAwardAchievementsAsync(Guid userId, bool saveChanges = true)
     {
         try
         {
@@ -134,9 +141,9 @@ public class GamificationService(
                     userAchievement.Completed = true;
                     userAchievement.CompletedAt = DateTime.UtcNow;
 
-                    // Award points
+                    // Award points (don't save yet)
                     await AwardPointsAsync(userId, userAchievement.Achievement.RewardPoints,
-                        $"Completed achievement: {userAchievement.Achievement.Title}");
+                        $"Completed achievement: {userAchievement.Achievement.Title}", saveChanges: false);
 
                     // Award badge if associated
                     if (userAchievement.Achievement.RewardBadgeId.HasValue)
@@ -172,7 +179,10 @@ public class GamificationService(
                 }
             }
 
-            await context.SaveChangesAsync();
+            if (saveChanges)
+            {
+                await context.SaveChangesAsync();
+            }
         }
         catch (Exception ex)
         {
@@ -181,7 +191,7 @@ public class GamificationService(
         }
     }
 
-    public async Task UpdateAchievementProgressAsync(Guid userId, string achievementType, int progress = 1, bool isAbsolute = false)
+    public async Task UpdateAchievementProgressAsync(Guid userId, string achievementType, int progress = 1, bool isAbsolute = false, bool saveChanges = true)
     {
         try
         {
@@ -191,8 +201,21 @@ public class GamificationService(
 
             foreach (Achievement achievement in achievements)
             {
+                // First check the database
                 UserAchievement? userAchievement = await context.UserAchievements
                     .FirstOrDefaultAsync(ua => ua.UserId == userId && ua.AchievementId == achievement.Id);
+
+                // Also check the change tracker for achievements added but not yet saved
+                if (userAchievement == null)
+                {
+                    userAchievement = context.ChangeTracker
+                        .Entries<UserAchievement>()
+                        .Where(e => e.Entity.UserId == userId &&
+                                    e.Entity.AchievementId == achievement.Id &&
+                                    e.State == EntityState.Added)
+                        .Select(e => e.Entity)
+                        .FirstOrDefault();
+                }
 
                 if (userAchievement == null)
                 {
@@ -215,8 +238,13 @@ public class GamificationService(
                 }
             }
 
-            await context.SaveChangesAsync();
-            await CheckAndAwardAchievementsAsync(userId);
+            // Check achievements (which may award badges/points)
+            await CheckAndAwardAchievementsAsync(userId, saveChanges: false);
+
+            if (saveChanges)
+            {
+                await context.SaveChangesAsync();
+            }
         }
         catch (Exception ex)
         {
