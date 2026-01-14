@@ -6,7 +6,6 @@ using Civica.Api.Models.Responses.Authority;
 using Civica.Api.Models.Domain;
 using Civica.Api.Data;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Civica.Api.Services;
 
@@ -79,7 +78,6 @@ public class AdminService(
                     Title = i.Title,
                     Category = i.Category,
                     Urgency = i.Urgency,
-                    Priority = i.Priority,
                     Status = i.Status,
                     Address = i.Address,
                     CreatedAt = i.CreatedAt,
@@ -133,7 +131,6 @@ public class AdminService(
                 Description = issue.Description,
                 Category = issue.Category,
                 Urgency = issue.Urgency,
-                Priority = issue.Priority,
                 Status = issue.Status,
                 Address = issue.Address,
                 Latitude = issue.Latitude,
@@ -152,8 +149,6 @@ public class AdminService(
                 AIConfidence = issue.AIConfidence,
                 AdminNotes = issue.AdminNotes,
                 RejectionReason = issue.RejectionReason,
-                AssignedDepartment = issue.AssignedDepartment,
-                EstimatedResolutionTime = issue.EstimatedResolutionTime,
                 PublicVisibility = issue.PublicVisibility,
                 ReviewedAt = issue.ReviewedAt,
                 ReviewedBy = issue.ReviewedBy,
@@ -195,8 +190,6 @@ public class AdminService(
                     Notes = aa.Notes,
                     PreviousStatus = aa.PreviousStatus,
                     NewStatus = aa.NewStatus,
-                    AssignedDepartment = aa.AssignedDepartment,
-                    EstimatedResolutionTime = aa.EstimatedResolutionTime,
                     CreatedAt = aa.CreatedAt
                 }).ToList(),
                 EmailsSent = issue.EmailsSent
@@ -211,8 +204,6 @@ public class AdminService(
 
     public async Task<IssueActionResponse> ApproveIssueAsync(Guid issueId, ApproveIssueRequest request, string adminUserId)
     {
-        using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
-        
         try
         {
             Issue? issue = await context.Issues
@@ -237,7 +228,6 @@ public class AdminService(
                 };
             }
 
-            // Get admin user
             UserProfile? adminUser = await context.UserProfiles
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == adminUserId);
 
@@ -256,13 +246,10 @@ public class AdminService(
             issue.ReviewedAt = DateTime.UtcNow;
             issue.ReviewedBy = adminUser.DisplayName;
             issue.AdminNotes = request.AdminNotes;
-            issue.Priority = request.Priority ?? issue.Priority;
-            issue.AssignedDepartment = request.AssignedDepartment;
-            issue.EstimatedResolutionTime = request.EstimatedResolutionTime;
             issue.UpdatedAt = DateTime.UtcNow;
 
             // Create admin action record
-            AdminAction adminAction = new()
+            context.AdminActions.Add(new AdminAction
             {
                 Id = Guid.NewGuid(),
                 IssueId = issueId,
@@ -272,21 +259,15 @@ public class AdminService(
                 Notes = request.AdminNotes,
                 PreviousStatus = previousStatus,
                 NewStatus = IssueStatus.Active.ToString(),
-                AssignedDepartment = request.AssignedDepartment,
-                EstimatedResolutionTime = request.EstimatedResolutionTime,
                 CreatedAt = DateTime.UtcNow
-            };
+            });
 
-            context.AdminActions.Add(adminAction);
+            // Award points and badges (don't save yet - accumulate all changes)
+            await gamificationService.AwardPointsAsync(issue.UserId, 50, $"Issue approved: {issue.Title}", saveChanges: false);
+            await gamificationService.CheckAndAwardBadgesAsync(issue.UserId, saveChanges: false);
 
-            // Award points to user (50 points for approval)
-            await gamificationService.AwardPointsAsync(issue.UserId, 50, $"Issue approved: {issue.Title}");
-
-            // Check for new badges
-            await gamificationService.CheckAndAwardBadgesAsync(issue.UserId);
-
+            // Single atomic save for all changes (issue, admin action, points, badges)
             await context.SaveChangesAsync();
-            await transaction.CommitAsync();
 
             logger.LogInformation(
                 "Issue approved: {IssueId} by admin: {AdminUserId}",
@@ -304,9 +285,8 @@ public class AdminService(
         }
         catch (Exception ex)
         {
-            await transaction.RollbackAsync();
             logger.LogError(ex, "Error approving issue: {IssueId}", issueId);
-            
+
             return new IssueActionResponse
             {
                 Success = false,
@@ -317,8 +297,6 @@ public class AdminService(
 
     public async Task<IssueActionResponse> RejectIssueAsync(Guid issueId, RejectIssueRequest request, string adminUserId)
     {
-        using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
-        
         try
         {
             Issue? issue = await context.Issues
@@ -342,7 +320,6 @@ public class AdminService(
                 };
             }
 
-            // Get admin user
             UserProfile? adminUser = await context.UserProfiles
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == adminUserId);
 
@@ -365,7 +342,7 @@ public class AdminService(
             issue.UpdatedAt = DateTime.UtcNow;
 
             // Create admin action record
-            AdminAction adminAction = new()
+            context.AdminActions.Add(new AdminAction
             {
                 Id = Guid.NewGuid(),
                 IssueId = issueId,
@@ -376,12 +353,9 @@ public class AdminService(
                 PreviousStatus = previousStatus,
                 NewStatus = IssueStatus.Rejected.ToString(),
                 CreatedAt = DateTime.UtcNow
-            };
-
-            context.AdminActions.Add(adminAction);
+            });
 
             await context.SaveChangesAsync();
-            await transaction.CommitAsync();
 
             logger.LogInformation(
                 "Issue rejected: {IssueId} by admin: {AdminUserId}. Reason: {Reason}",
@@ -400,9 +374,8 @@ public class AdminService(
         }
         catch (Exception ex)
         {
-            await transaction.RollbackAsync();
             logger.LogError(ex, "Error rejecting issue: {IssueId}", issueId);
-            
+
             return new IssueActionResponse
             {
                 Success = false,
@@ -413,8 +386,6 @@ public class AdminService(
 
     public async Task<IssueActionResponse> RequestChangesAsync(Guid issueId, RequestChangesRequest request, string adminUserId)
     {
-        using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
-        
         try
         {
             Issue? issue = await context.Issues
@@ -429,7 +400,6 @@ public class AdminService(
                 };
             }
 
-            // Get admin user
             UserProfile? adminUser = await context.UserProfiles
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == adminUserId);
 
@@ -449,7 +419,7 @@ public class AdminService(
             issue.UpdatedAt = DateTime.UtcNow;
 
             // Create admin action record
-            AdminAction adminAction = new()
+            context.AdminActions.Add(new AdminAction
             {
                 Id = Guid.NewGuid(),
                 IssueId = issueId,
@@ -460,12 +430,9 @@ public class AdminService(
                 PreviousStatus = previousStatus,
                 NewStatus = IssueStatus.UnderReview.ToString(),
                 CreatedAt = DateTime.UtcNow
-            };
-
-            context.AdminActions.Add(adminAction);
+            });
 
             await context.SaveChangesAsync();
-            await transaction.CommitAsync();
 
             logger.LogInformation(
                 "Changes requested for issue: {IssueId} by admin: {AdminUserId}",
@@ -483,9 +450,8 @@ public class AdminService(
         }
         catch (Exception ex)
         {
-            await transaction.RollbackAsync();
             logger.LogError(ex, "Error requesting changes for issue: {IssueId}", issueId);
-            
+
             return new IssueActionResponse
             {
                 Success = false,
@@ -556,10 +522,6 @@ public class AdminService(
                 .GroupBy(i => i.Urgency.ToString())
                 .ToDictionary(g => g.Key, g => g.Count());
 
-            Dictionary<string, int> priorityBreakdown = periodIssues
-                .GroupBy(i => i.Priority.ToString())
-                .ToDictionary(g => g.Key, g => g.Count());
-
             // User statistics
             var totalUsers = await context.UserProfiles.CountAsync();
             var activeUsersThisMonth = await context.Issues
@@ -604,7 +566,6 @@ public class AdminService(
                 AverageReviewTimeHours = Math.Round(avgReviewTime, 2),
                 IssuesByCategory = categoryBreakdown,
                 IssuesByUrgency = urgencyBreakdown,
-                IssuesByPriority = priorityBreakdown,
                 TotalUsers = totalUsers,
                 ActiveUsersThisMonth = activeUsersThisMonth,
                 TotalEmailsSent = totalEmailsSent,
@@ -624,82 +585,45 @@ public class AdminService(
 
     public async Task<BulkApproveResponse> BulkApproveIssuesAsync(BulkApproveRequest request, string adminUserId)
     {
-        using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
-        
-        try
+        BulkApproveResponse response = new()
         {
-            BulkApproveResponse response = new()
+            TotalRequested = request.IssueIds.Count,
+            SuccessfullyApproved = 0,
+            Failed = 0,
+            Results = []
+        };
+
+        foreach (Guid issueId in request.IssueIds)
+        {
+            ApproveIssueRequest approveRequest = new()
             {
-                TotalRequested = request.IssueIds.Count,
-                SuccessfullyApproved = 0,
-                Failed = 0,
-                Results = []
+                AdminNotes = request.AdminNotes
             };
 
-            // Get admin user
-            UserProfile? adminUser = await context.UserProfiles
-                .FirstOrDefaultAsync(u => u.SupabaseUserId == adminUserId);
+            IssueActionResponse result = await ApproveIssueAsync(issueId, approveRequest, adminUserId);
 
-            if (adminUser == null)
+            response.Results.Add(new BulkApproveResult
             {
-                response.Failed = request.IssueIds.Count;
-                response.Message = "Admin user not found";
-                return response;
-            }
+                IssueId = issueId,
+                Success = result.Success,
+                Message = result.Message
+            });
 
-            foreach (Guid issueId in request.IssueIds)
+            if (result.Success)
             {
-                try
-                {
-                    ApproveIssueRequest approveRequest = new()
-                    {
-                        AdminNotes = request.AdminNotes,
-                        Priority = request.DefaultPriority,
-                        AssignedDepartment = request.DefaultDepartment
-                    };
-
-                    IssueActionResponse result = await ApproveIssueAsync(issueId, approveRequest, adminUserId);
-                    
-                    response.Results.Add(new BulkApproveResult
-                    {
-                        IssueId = issueId,
-                        Success = result.Success,
-                        Message = result.Message
-                    });
-
-                    if (result.Success)
-                    {
-                        response.SuccessfullyApproved++;
-                    }
-                    else
-                    {
-                        response.Failed++;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Error in bulk approve for issue: {IssueId}", issueId);
-                    response.Failed++;
-                    response.Results.Add(new BulkApproveResult
-                    {
-                        IssueId = issueId,
-                        Success = false,
-                        Message = "Error processing issue"
-                    });
-                }
+                response.SuccessfullyApproved++;
             }
-
-            await transaction.CommitAsync();
-
-            response.Message = $"Bulk approval completed: {response.SuccessfullyApproved} approved, {response.Failed} failed";
-            return response;
+            else
+            {
+                response.Failed++;
+                // Clear change tracker to prevent polluting subsequent approvals
+                // with any partial changes from the failed approval
+                context.ChangeTracker.Clear();
+            }
         }
-        catch (Exception ex)
-        {
-            await transaction.RollbackAsync();
-            logger.LogError(ex, "Error in bulk approve operation");
-            throw;
-        }
+
+        response.Message = $"Bulk approval completed: {response.SuccessfullyApproved} approved, {response.Failed} failed";
+        return response;
     }
 
     public async Task<GetModerationStatsResponse> GetModerationStatsAsync(string adminUserId)
@@ -817,8 +741,6 @@ public class AdminService(
                     Notes = aa.Notes,
                     PreviousStatus = aa.PreviousStatus,
                     NewStatus = aa.NewStatus,
-                    AssignedDepartment = aa.AssignedDepartment,
-                    EstimatedResolutionTime = aa.EstimatedResolutionTime,
                     CreatedAt = aa.CreatedAt
                 })
                 .ToListAsync();

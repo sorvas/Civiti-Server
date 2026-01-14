@@ -401,6 +401,9 @@ public class CivicaDbContext(DbContextOptions<CivicaDbContext> options) : DbCont
                 Id = Guid.Parse("a0000001-0000-0000-0000-000000000001"),
                 Name = "Primăria Municipiului București",
                 Email = "pmb@pmb.ro",
+                County = "București",
+                City = "București",
+                District = null, // City-wide authority
                 IsActive = true,
                 CreatedAt = createdAt
             },
@@ -410,6 +413,9 @@ public class CivicaDbContext(DbContextOptions<CivicaDbContext> options) : DbCont
                 Id = Guid.Parse("a0000001-0000-0000-0000-000000000002"),
                 Name = "Primăria Sectorului 1 București",
                 Email = "primarie@primarias1.ro",
+                County = "București",
+                City = "București",
+                District = "Sector 1",
                 IsActive = true,
                 CreatedAt = createdAt
             },
@@ -418,6 +424,9 @@ public class CivicaDbContext(DbContextOptions<CivicaDbContext> options) : DbCont
                 Id = Guid.Parse("a0000001-0000-0000-0000-000000000003"),
                 Name = "Primăria Sectorului 2 București",
                 Email = "primarie@ps2.ro",
+                County = "București",
+                City = "București",
+                District = "Sector 2",
                 IsActive = true,
                 CreatedAt = createdAt
             },
@@ -426,6 +435,9 @@ public class CivicaDbContext(DbContextOptions<CivicaDbContext> options) : DbCont
                 Id = Guid.Parse("a0000001-0000-0000-0000-000000000004"),
                 Name = "Primăria Sectorului 3 București",
                 Email = "primarie@primarie3.ro",
+                County = "București",
+                City = "București",
+                District = "Sector 3",
                 IsActive = true,
                 CreatedAt = createdAt
             },
@@ -434,6 +446,9 @@ public class CivicaDbContext(DbContextOptions<CivicaDbContext> options) : DbCont
                 Id = Guid.Parse("a0000001-0000-0000-0000-000000000005"),
                 Name = "Primăria Sectorului 4 București",
                 Email = "primarie@ps4.ro",
+                County = "București",
+                City = "București",
+                District = "Sector 4",
                 IsActive = true,
                 CreatedAt = createdAt
             },
@@ -442,6 +457,9 @@ public class CivicaDbContext(DbContextOptions<CivicaDbContext> options) : DbCont
                 Id = Guid.Parse("a0000001-0000-0000-0000-000000000006"),
                 Name = "Primăria Sectorului 5 București",
                 Email = "primarie@sector5.ro",
+                County = "București",
+                City = "București",
+                District = "Sector 5",
                 IsActive = true,
                 CreatedAt = createdAt
             },
@@ -450,6 +468,9 @@ public class CivicaDbContext(DbContextOptions<CivicaDbContext> options) : DbCont
                 Id = Guid.Parse("a0000001-0000-0000-0000-000000000007"),
                 Name = "Primăria Sectorului 6 București",
                 Email = "primarie@primarie6.ro",
+                County = "București",
+                City = "București",
+                District = "Sector 6",
                 IsActive = true,
                 CreatedAt = createdAt
             },
@@ -459,6 +480,9 @@ public class CivicaDbContext(DbContextOptions<CivicaDbContext> options) : DbCont
                 Id = Guid.Parse("a0000002-0000-0000-0000-000000000001"),
                 Name = "Primăria Municipiului Cluj-Napoca",
                 Email = "primarie@primariaclujnapoca.ro",
+                County = "Cluj",
+                City = "Cluj-Napoca",
+                District = null,
                 IsActive = true,
                 CreatedAt = createdAt
             },
@@ -467,6 +491,9 @@ public class CivicaDbContext(DbContextOptions<CivicaDbContext> options) : DbCont
                 Id = Guid.Parse("a0000002-0000-0000-0000-000000000002"),
                 Name = "Primăria Municipiului Timișoara",
                 Email = "primarie@primariatm.ro",
+                County = "Timiș",
+                City = "Timișoara",
+                District = null,
                 IsActive = true,
                 CreatedAt = createdAt
             },
@@ -475,6 +502,9 @@ public class CivicaDbContext(DbContextOptions<CivicaDbContext> options) : DbCont
                 Id = Guid.Parse("a0000002-0000-0000-0000-000000000003"),
                 Name = "Primăria Municipiului Iași",
                 Email = "primarie@primaria-iasi.ro",
+                County = "Iași",
+                City = "Iași",
+                District = null,
                 IsActive = true,
                 CreatedAt = createdAt
             },
@@ -483,6 +513,9 @@ public class CivicaDbContext(DbContextOptions<CivicaDbContext> options) : DbCont
                 Id = Guid.Parse("a0000002-0000-0000-0000-000000000004"),
                 Name = "Primăria Municipiului Constanța",
                 Email = "primarie@primaria-constanta.ro",
+                County = "Constanța",
+                City = "Constanța",
+                District = null,
                 IsActive = true,
                 CreatedAt = createdAt
             },
@@ -491,6 +524,9 @@ public class CivicaDbContext(DbContextOptions<CivicaDbContext> options) : DbCont
                 Id = Guid.Parse("a0000002-0000-0000-0000-000000000005"),
                 Name = "Primăria Municipiului Brașov",
                 Email = "primarie@brasovcity.ro",
+                County = "Brașov",
+                City = "Brașov",
+                District = null,
                 IsActive = true,
                 CreatedAt = createdAt
             }
