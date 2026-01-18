@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 using Civica.Api.Services.Interfaces;
 using Civica.Api.Infrastructure.Constants;
 using Civica.Api.Infrastructure.Extensions;
@@ -40,19 +41,31 @@ public static class UserEndpoints
                 return Results.Unauthorized();
             }
 
-            UserProfileResponse? profile = await userService.GetUserProfileAsync(supabaseUserId);
+            var email = context.User.GetEmail();
+            if (string.IsNullOrEmpty(email))
+            {
+                return Results.BadRequest(new { error = "Email not found in token" });
+            }
 
-            return profile == null ? Results.NotFound(new { error = "User profile not found" }) : Results.Ok(profile);
+            // Extract display name and photo from JWT user_metadata
+            var displayName = context.User.GetDisplayName(email);
+            var photoUrl = context.User.GetPhotoUrl();
+
+            // Get existing profile or auto-create one
+            UserProfileResponse profile = await userService.GetOrCreateUserProfileAsync(
+                supabaseUserId, email, displayName, photoUrl);
+
+            return Results.Ok(profile);
         })
         .WithName("GetUserProfile")
         .WithSummary("Get user's complete profile")
-        .WithDescription("Retrieves the complete profile for the authenticated user including personal information, gamification data (points, level, badges, achievements), and notification preferences. This is the primary endpoint for fetching user profile data.")
+        .WithDescription("Retrieves the complete profile for the authenticated user including personal information, gamification data (points, level, badges, achievements), and notification preferences. If no profile exists, one will be automatically created using data from the JWT token.")
         .Produces<UserProfileResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status404NotFound)
         .WithOpenApi();
 
-        // POST /api/user/profile - Create profile after OAuth registration
+        // POST /api/user/profile - Create or update profile
         group.MapPost("/profile", async (
             CreateUserProfileRequest request,
             HttpContext context,
@@ -72,8 +85,61 @@ public static class UserEndpoints
 
             try
             {
+                // Check if profile already exists
+                UserProfileResponse? existingProfile = await userService.GetUserProfileAsync(supabaseUserId);
+                if (existingProfile != null)
+                {
+                    // Profile exists - update it with provided data
+                    UpdateUserProfileRequest updateRequest = new()
+                    {
+                        DisplayName = request.DisplayName,
+                        PhotoUrl = request.PhotoUrl,
+                        County = request.County,
+                        City = request.City,
+                        District = request.District,
+                        ResidenceType = request.ResidenceType
+                    };
+                    UserProfileResponse updatedProfile = await userService.UpdateUserProfileAsync(supabaseUserId, updateRequest);
+                    return Results.Ok(updatedProfile);
+                }
+
+                // Profile doesn't exist - attempt to create it
                 UserProfileResponse profile = await userService.CreateUserProfileAsync(request, supabaseUserId, email);
                 return Results.Created($"/api/user/profile", profile);
+            }
+            catch (DbUpdateException)
+            {
+                // Handle race condition: another request may have created the profile concurrently
+                // Retry getting the profile and update it
+                UserProfileResponse? concurrentProfile = await userService.GetUserProfileAsync(supabaseUserId);
+                if (concurrentProfile != null)
+                {
+                    try
+                    {
+                        UpdateUserProfileRequest updateRequest = new()
+                        {
+                            DisplayName = request.DisplayName,
+                            PhotoUrl = request.PhotoUrl,
+                            County = request.County,
+                            City = request.City,
+                            District = request.District,
+                            ResidenceType = request.ResidenceType
+                        };
+                        UserProfileResponse updatedProfile = await userService.UpdateUserProfileAsync(supabaseUserId, updateRequest);
+                        return Results.Ok(updatedProfile);
+                    }
+                    catch (InvalidOperationException ex) when (ex.Message == "User not found")
+                    {
+                        // Profile was deleted between get and update - very rare edge case
+                        return Results.NotFound(new { error = "User profile not found" });
+                    }
+                }
+                throw; // Re-throw if profile still doesn't exist (genuine DB error)
+            }
+            catch (InvalidOperationException ex) when (ex.Message == "User not found")
+            {
+                // Profile was deleted between existence check and update
+                return Results.NotFound(new { error = "User profile not found" });
             }
             catch (ArgumentException ex)
             {
@@ -81,11 +147,13 @@ public static class UserEndpoints
             }
         })
         .WithName("CreateUserProfile")
-        .WithSummary("Create user profile after OAuth registration")
-        .WithDescription("Creates a new user profile in the Civica system after successful Supabase OAuth authentication. This endpoint should be called once per user immediately after their first login. The profile includes personal information, location details, and notification preferences.")
+        .WithSummary("Create or update user profile")
+        .WithDescription("Creates a new user profile in the Civica system after successful Supabase OAuth authentication, or updates an existing profile if one already exists. This endpoint is idempotent - calling it multiple times with the same data will not cause errors.")
         .Produces<UserProfileResponse>(StatusCodes.Status201Created)
+        .Produces<UserProfileResponse>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound)
         .WithOpenApi();
 
         // PUT /api/user/profile

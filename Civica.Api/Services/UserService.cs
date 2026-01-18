@@ -126,6 +126,77 @@ public class UserService(
         }
     }
 
+    public async Task<UserProfileResponse> GetOrCreateUserProfileAsync(
+        string supabaseUserId,
+        string email,
+        string displayName,
+        string? photoUrl)
+    {
+        // Try to get existing profile first
+        UserProfileResponse? existingProfile = await GetUserProfileAsync(supabaseUserId);
+        if (existingProfile != null)
+        {
+            return existingProfile;
+        }
+
+        // Profile doesn't exist - attempt to create it
+        try
+        {
+            logger.LogInformation("Auto-creating profile for user {SupabaseUserId}", supabaseUserId);
+
+            UserProfile user = new()
+            {
+                Id = Guid.NewGuid(),
+                SupabaseUserId = supabaseUserId,
+                Email = email,
+                DisplayName = displayName,
+                PhotoUrl = photoUrl,
+                County = "București",
+                City = "București",
+                District = "Sector 5",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                LastActivityDate = DateTime.UtcNow,
+                CurrentLoginStreak = 1,
+                LongestLoginStreak = 1,
+                EmailVerified = true
+            };
+
+            context.UserProfiles.Add(user);
+            await context.SaveChangesAsync();
+
+            logger.LogInformation("User profile auto-created: {UserId} for Supabase user {SupabaseUserId}",
+                user.Id, supabaseUserId);
+
+            return (await GetUserProfileAsync(supabaseUserId))!;
+        }
+        catch (DbUpdateException ex)
+        {
+            // Handle race condition: another request may have created the profile concurrently
+            // Clear the failed entity from the change tracker and retry the get
+            context.ChangeTracker.Clear();
+
+            logger.LogInformation(
+                "Profile creation conflict for {SupabaseUserId}, fetching existing profile (likely concurrent creation)",
+                supabaseUserId);
+
+            UserProfileResponse? profile = await GetUserProfileAsync(supabaseUserId);
+            if (profile != null)
+            {
+                return profile;
+            }
+
+            // If still null, it's a genuine database error
+            logger.LogError(ex, "Database error in GetOrCreateUserProfileAsync for Supabase ID: {SupabaseUserId}", supabaseUserId);
+            throw new InvalidOperationException($"Failed to get or create user profile for Supabase ID: {supabaseUserId}", ex);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error in GetOrCreateUserProfileAsync for Supabase ID: {SupabaseUserId}", supabaseUserId);
+            throw new InvalidOperationException($"Failed to get or create user profile for Supabase ID: {supabaseUserId}", ex);
+        }
+    }
+
     private async Task UpdateLoginStreakAsync(Guid userId)
     {
         // Use execution strategy to handle transient failures
@@ -251,6 +322,13 @@ public class UserService(
         catch (ArgumentException)
         {
             throw; // Re-throw argument exceptions as-is
+        }
+        catch (DbUpdateException)
+        {
+            // Clear the failed entity from change tracker before re-throwing
+            // so callers can safely retry with the same DbContext
+            context.ChangeTracker.Clear();
+            throw;
         }
         catch (Exception ex)
         {
