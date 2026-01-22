@@ -206,118 +206,105 @@ public class AdminService(
             // Clear change tracker to ensure fresh data on retry
             context.ChangeTracker.Clear();
 
-            try
+            Issue? issue = await context.Issues
+                .Include(i => i.User)
+                .FirstOrDefaultAsync(i => i.Id == issueId);
+
+            if (issue == null)
             {
-                Issue? issue = await context.Issues
-                    .Include(i => i.User)
-                    .FirstOrDefaultAsync(i => i.Id == issueId);
-
-                if (issue == null)
-                {
-                    return new IssueActionResponse
-                    {
-                        Success = false,
-                        Message = "Issue not found"
-                    };
-                }
-
-                if (issue.Status != IssueStatus.Submitted && issue.Status != IssueStatus.UnderReview)
-                {
-                    return new IssueActionResponse
-                    {
-                        Success = false,
-                        Message = "Issue is not in a reviewable state"
-                    };
-                }
-
-                UserProfile? adminUser = await context.UserProfiles
-                    .FirstOrDefaultAsync(u => u.SupabaseUserId == adminUserId);
-
-                if (adminUser == null)
-                {
-                    return new IssueActionResponse
-                    {
-                        Success = false,
-                        Message = "Admin user not found"
-                    };
-                }
-
-                await using var transaction = await context.Database.BeginTransactionAsync();
-
-                try
-                {
-                    // Update issue
-                    var previousStatus = issue.Status.ToString();
-                    issue.Status = IssueStatus.Active;
-                    issue.ReviewedAt = DateTime.UtcNow;
-                    issue.ReviewedBy = adminUser.DisplayName;
-                    issue.AdminNotes = request.AdminNotes;
-                    issue.UpdatedAt = DateTime.UtcNow;
-
-                    // Create admin action record
-                    context.AdminActions.Add(new AdminAction
-                    {
-                        Id = Guid.NewGuid(),
-                        IssueId = issueId,
-                        AdminUserId = adminUser.Id,
-                        AdminSupabaseId = adminUserId,
-                        ActionType = AdminActionType.Approve,
-                        Notes = request.AdminNotes,
-                        PreviousStatus = previousStatus,
-                        NewStatus = IssueStatus.Active.ToString(),
-                        CreatedAt = DateTime.UtcNow
-                    });
-
-                    // Award points and badges (don't save yet - accumulate all changes)
-                    await gamificationService.AwardPointsAsync(issue.UserId, 50, $"Issue approved: {issue.Title}", saveChanges: false);
-                    await gamificationService.CheckAndAwardBadgesAsync(issue.UserId, saveChanges: false);
-
-                    // Single atomic save for all changes (issue, admin action, points, badges)
-                    await context.SaveChangesAsync();
-                    await transaction.CommitAsync();
-
-                    // Record activity (outside transaction to avoid issues)
-                    try
-                    {
-                        await activityService.RecordActivityAsync(
-                            ActivityType.IssueApproved,
-                            issueId,
-                            adminUser.Id);
-                    }
-                    catch (Exception activityEx)
-                    {
-                        logger.LogError(activityEx, "Failed to record IssueApproved activity for issue {IssueId}", issueId);
-                    }
-
-                    logger.LogInformation(
-                        "Issue approved: {IssueId} by admin: {AdminUserId}",
-                        issueId,
-                        adminUserId);
-
-                    return new IssueActionResponse
-                    {
-                        Success = true,
-                        Message = "Issue approved successfully",
-                        IssueId = issueId,
-                        NewStatus = IssueStatus.Active.ToString(),
-                        UpdatedAt = DateTime.UtcNow
-                    };
-                }
-                catch
-                {
-                    await transaction.RollbackAsync();
-                    throw;
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error approving issue: {IssueId}", issueId);
-
                 return new IssueActionResponse
                 {
                     Success = false,
-                    Message = "An error occurred while approving the issue"
+                    Message = "Issue not found"
                 };
+            }
+
+            if (issue.Status != IssueStatus.Submitted && issue.Status != IssueStatus.UnderReview)
+            {
+                return new IssueActionResponse
+                {
+                    Success = false,
+                    Message = "Issue is not in a reviewable state"
+                };
+            }
+
+            UserProfile? adminUser = await context.UserProfiles
+                .FirstOrDefaultAsync(u => u.SupabaseUserId == adminUserId);
+
+            if (adminUser == null)
+            {
+                return new IssueActionResponse
+                {
+                    Success = false,
+                    Message = "Admin user not found"
+                };
+            }
+
+            await using var transaction = await context.Database.BeginTransactionAsync();
+
+            try
+            {
+                // Update issue
+                var previousStatus = issue.Status.ToString();
+                issue.Status = IssueStatus.Active;
+                issue.ReviewedAt = DateTime.UtcNow;
+                issue.ReviewedBy = adminUser.DisplayName;
+                issue.AdminNotes = request.AdminNotes;
+                issue.UpdatedAt = DateTime.UtcNow;
+
+                // Create admin action record
+                context.AdminActions.Add(new AdminAction
+                {
+                    Id = Guid.NewGuid(),
+                    IssueId = issueId,
+                    AdminUserId = adminUser.Id,
+                    AdminSupabaseId = adminUserId,
+                    ActionType = AdminActionType.Approve,
+                    Notes = request.AdminNotes,
+                    PreviousStatus = previousStatus,
+                    NewStatus = IssueStatus.Active.ToString(),
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                // Award points and badges (don't save yet - accumulate all changes)
+                await gamificationService.AwardPointsAsync(issue.UserId, 50, $"Issue approved: {issue.Title}", saveChanges: false);
+                await gamificationService.CheckAndAwardBadgesAsync(issue.UserId, saveChanges: false);
+
+                // Single atomic save for all changes (issue, admin action, points, badges)
+                await context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                // Record activity (outside transaction to avoid issues)
+                try
+                {
+                    await activityService.RecordActivityAsync(
+                        ActivityType.IssueApproved,
+                        issueId,
+                        adminUser.Id);
+                }
+                catch (Exception activityEx)
+                {
+                    logger.LogError(activityEx, "Failed to record IssueApproved activity for issue {IssueId}", issueId);
+                }
+
+                logger.LogInformation(
+                    "Issue approved: {IssueId} by admin: {AdminUserId}",
+                    issueId,
+                    adminUserId);
+
+                return new IssueActionResponse
+                {
+                    Success = true,
+                    Message = "Issue approved successfully",
+                    IssueId = issueId,
+                    NewStatus = IssueStatus.Active.ToString(),
+                    UpdatedAt = DateTime.UtcNow
+                };
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
             }
         });
     }
@@ -332,101 +319,88 @@ public class AdminService(
             // Clear change tracker to ensure fresh data on retry
             context.ChangeTracker.Clear();
 
-            try
+            Issue? issue = await context.Issues
+                .FirstOrDefaultAsync(i => i.Id == issueId);
+
+            if (issue == null)
             {
-                Issue? issue = await context.Issues
-                    .FirstOrDefaultAsync(i => i.Id == issueId);
-
-                if (issue == null)
-                {
-                    return new IssueActionResponse
-                    {
-                        Success = false,
-                        Message = "Issue not found"
-                    };
-                }
-
-                if (issue.Status != IssueStatus.Submitted && issue.Status != IssueStatus.UnderReview)
-                {
-                    return new IssueActionResponse
-                    {
-                        Success = false,
-                        Message = "Issue is not in a reviewable state"
-                    };
-                }
-
-                UserProfile? adminUser = await context.UserProfiles
-                    .FirstOrDefaultAsync(u => u.SupabaseUserId == adminUserId);
-
-                if (adminUser == null)
-                {
-                    return new IssueActionResponse
-                    {
-                        Success = false,
-                        Message = "Admin user not found"
-                    };
-                }
-
-                await using var transaction = await context.Database.BeginTransactionAsync();
-
-                try
-                {
-                    // Update issue
-                    var previousStatus = issue.Status.ToString();
-                    issue.Status = IssueStatus.Rejected;
-                    issue.ReviewedAt = DateTime.UtcNow;
-                    issue.ReviewedBy = adminUser.DisplayName;
-                    issue.RejectionReason = request.Reason;
-                    issue.AdminNotes = request.InternalNotes;
-                    issue.UpdatedAt = DateTime.UtcNow;
-
-                    // Create admin action record
-                    context.AdminActions.Add(new AdminAction
-                    {
-                        Id = Guid.NewGuid(),
-                        IssueId = issueId,
-                        AdminUserId = adminUser.Id,
-                        AdminSupabaseId = adminUserId,
-                        ActionType = AdminActionType.Reject,
-                        Notes = $"Reason: {request.Reason}. Internal notes: {request.InternalNotes}",
-                        PreviousStatus = previousStatus,
-                        NewStatus = IssueStatus.Rejected.ToString(),
-                        CreatedAt = DateTime.UtcNow
-                    });
-
-                    await context.SaveChangesAsync();
-                    await transaction.CommitAsync();
-
-                    logger.LogInformation(
-                        "Issue rejected: {IssueId} by admin: {AdminUserId}. Reason: {Reason}",
-                        issueId,
-                        adminUserId,
-                        request.Reason);
-
-                    return new IssueActionResponse
-                    {
-                        Success = true,
-                        Message = "Issue rejected",
-                        IssueId = issueId,
-                        NewStatus = IssueStatus.Rejected.ToString(),
-                        UpdatedAt = DateTime.UtcNow
-                    };
-                }
-                catch
-                {
-                    await transaction.RollbackAsync();
-                    throw;
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error rejecting issue: {IssueId}", issueId);
-
                 return new IssueActionResponse
                 {
                     Success = false,
-                    Message = "An error occurred while rejecting the issue"
+                    Message = "Issue not found"
                 };
+            }
+
+            if (issue.Status != IssueStatus.Submitted && issue.Status != IssueStatus.UnderReview)
+            {
+                return new IssueActionResponse
+                {
+                    Success = false,
+                    Message = "Issue is not in a reviewable state"
+                };
+            }
+
+            UserProfile? adminUser = await context.UserProfiles
+                .FirstOrDefaultAsync(u => u.SupabaseUserId == adminUserId);
+
+            if (adminUser == null)
+            {
+                return new IssueActionResponse
+                {
+                    Success = false,
+                    Message = "Admin user not found"
+                };
+            }
+
+            await using var transaction = await context.Database.BeginTransactionAsync();
+
+            try
+            {
+                // Update issue
+                var previousStatus = issue.Status.ToString();
+                issue.Status = IssueStatus.Rejected;
+                issue.ReviewedAt = DateTime.UtcNow;
+                issue.ReviewedBy = adminUser.DisplayName;
+                issue.RejectionReason = request.Reason;
+                issue.AdminNotes = request.InternalNotes;
+                issue.UpdatedAt = DateTime.UtcNow;
+
+                // Create admin action record
+                context.AdminActions.Add(new AdminAction
+                {
+                    Id = Guid.NewGuid(),
+                    IssueId = issueId,
+                    AdminUserId = adminUser.Id,
+                    AdminSupabaseId = adminUserId,
+                    ActionType = AdminActionType.Reject,
+                    Notes = $"Reason: {request.Reason}. Internal notes: {request.InternalNotes}",
+                    PreviousStatus = previousStatus,
+                    NewStatus = IssueStatus.Rejected.ToString(),
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                await context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                logger.LogInformation(
+                    "Issue rejected: {IssueId} by admin: {AdminUserId}. Reason: {Reason}",
+                    issueId,
+                    adminUserId,
+                    request.Reason);
+
+                return new IssueActionResponse
+                {
+                    Success = true,
+                    Message = "Issue rejected",
+                    IssueId = issueId,
+                    NewStatus = IssueStatus.Rejected.ToString(),
+                    UpdatedAt = DateTime.UtcNow
+                };
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
             }
         });
     }
@@ -441,88 +415,75 @@ public class AdminService(
             // Clear change tracker to ensure fresh data on retry
             context.ChangeTracker.Clear();
 
-            try
+            Issue? issue = await context.Issues
+                .FirstOrDefaultAsync(i => i.Id == issueId);
+
+            if (issue == null)
             {
-                Issue? issue = await context.Issues
-                    .FirstOrDefaultAsync(i => i.Id == issueId);
-
-                if (issue == null)
-                {
-                    return new IssueActionResponse
-                    {
-                        Success = false,
-                        Message = "Issue not found"
-                    };
-                }
-
-                UserProfile? adminUser = await context.UserProfiles
-                    .FirstOrDefaultAsync(u => u.SupabaseUserId == adminUserId);
-
-                if (adminUser == null)
-                {
-                    return new IssueActionResponse
-                    {
-                        Success = false,
-                        Message = "Admin user not found"
-                    };
-                }
-
-                await using var transaction = await context.Database.BeginTransactionAsync();
-
-                try
-                {
-                    // Update issue
-                    var previousStatus = issue.Status.ToString();
-                    issue.Status = IssueStatus.UnderReview;
-                    issue.AdminNotes = request.RequestedChanges;
-                    issue.UpdatedAt = DateTime.UtcNow;
-
-                    // Create admin action record
-                    context.AdminActions.Add(new AdminAction
-                    {
-                        Id = Guid.NewGuid(),
-                        IssueId = issueId,
-                        AdminUserId = adminUser.Id,
-                        AdminSupabaseId = adminUserId,
-                        ActionType = AdminActionType.RequestChanges,
-                        Notes = request.RequestedChanges,
-                        PreviousStatus = previousStatus,
-                        NewStatus = IssueStatus.UnderReview.ToString(),
-                        CreatedAt = DateTime.UtcNow
-                    });
-
-                    await context.SaveChangesAsync();
-                    await transaction.CommitAsync();
-
-                    logger.LogInformation(
-                        "Changes requested for issue: {IssueId} by admin: {AdminUserId}",
-                        issueId,
-                        adminUserId);
-
-                    return new IssueActionResponse
-                    {
-                        Success = true,
-                        Message = "Changes requested successfully",
-                        IssueId = issueId,
-                        NewStatus = IssueStatus.UnderReview.ToString(),
-                        UpdatedAt = DateTime.UtcNow
-                    };
-                }
-                catch
-                {
-                    await transaction.RollbackAsync();
-                    throw;
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error requesting changes for issue: {IssueId}", issueId);
-
                 return new IssueActionResponse
                 {
                     Success = false,
-                    Message = "An error occurred while requesting changes"
+                    Message = "Issue not found"
                 };
+            }
+
+            UserProfile? adminUser = await context.UserProfiles
+                .FirstOrDefaultAsync(u => u.SupabaseUserId == adminUserId);
+
+            if (adminUser == null)
+            {
+                return new IssueActionResponse
+                {
+                    Success = false,
+                    Message = "Admin user not found"
+                };
+            }
+
+            await using var transaction = await context.Database.BeginTransactionAsync();
+
+            try
+            {
+                // Update issue
+                var previousStatus = issue.Status.ToString();
+                issue.Status = IssueStatus.UnderReview;
+                issue.AdminNotes = request.RequestedChanges;
+                issue.UpdatedAt = DateTime.UtcNow;
+
+                // Create admin action record
+                context.AdminActions.Add(new AdminAction
+                {
+                    Id = Guid.NewGuid(),
+                    IssueId = issueId,
+                    AdminUserId = adminUser.Id,
+                    AdminSupabaseId = adminUserId,
+                    ActionType = AdminActionType.RequestChanges,
+                    Notes = request.RequestedChanges,
+                    PreviousStatus = previousStatus,
+                    NewStatus = IssueStatus.UnderReview.ToString(),
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                await context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                logger.LogInformation(
+                    "Changes requested for issue: {IssueId} by admin: {AdminUserId}",
+                    issueId,
+                    adminUserId);
+
+                return new IssueActionResponse
+                {
+                    Success = true,
+                    Message = "Changes requested successfully",
+                    IssueId = issueId,
+                    NewStatus = IssueStatus.UnderReview.ToString(),
+                    UpdatedAt = DateTime.UtcNow
+                };
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
             }
         });
     }
