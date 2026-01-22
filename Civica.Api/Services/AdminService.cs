@@ -12,7 +12,8 @@ namespace Civica.Api.Services;
 public class AdminService(
     ILogger<AdminService> logger,
     CivicaDbContext context,
-    IGamificationService gamificationService)
+    IGamificationService gamificationService,
+    IActivityService activityService)
     : IAdminService
 {
     public async Task<PagedResult<AdminIssueResponse>> GetPendingIssuesAsync(GetPendingIssuesRequest request)
@@ -121,6 +122,8 @@ public class AdminService(
                 return null;
             }
 
+            // Execute count queries before building response to avoid N+1 queries
+            var userTotalIssues = await context.Issues.CountAsync(i => i.UserId == issue.UserId);
             var userResolvedIssues = await context.Issues
                 .CountAsync(i => i.UserId == issue.UserId && i.Status == IssueStatus.Resolved);
 
@@ -149,7 +152,7 @@ public class AdminService(
                 UserName = issue.User.DisplayName,
                 UserEmail = issue.User.Email,
                 UserPhone = issue.User.Phone,
-                UserTotalIssues = await context.Issues.CountAsync(i => i.UserId == issue.UserId),
+                UserTotalIssues = userTotalIssues,
                 UserResolvedIssues = userResolvedIssues,
                 UserPoints = issue.User.Points,
                 Photos = issue.Photos.Select(p => new AdminIssuePhotoResponse
@@ -195,8 +198,14 @@ public class AdminService(
 
     public async Task<IssueActionResponse> ApproveIssueAsync(Guid issueId, ApproveIssueRequest request, string adminUserId)
     {
-        try
+        // Use execution strategy to handle transient failures with proper transaction support
+        var strategy = context.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync(async () =>
         {
+            // Clear change tracker to ensure fresh data on retry
+            context.ChangeTracker.Clear();
+
             Issue? issue = await context.Issues
                 .Include(i => i.User)
                 .FirstOrDefaultAsync(i => i.Id == issueId);
@@ -231,65 +240,85 @@ public class AdminService(
                 };
             }
 
-            // Update issue
-            var previousStatus = issue.Status.ToString();
-            issue.Status = IssueStatus.Active;
-            issue.ReviewedAt = DateTime.UtcNow;
-            issue.ReviewedBy = adminUser.DisplayName;
-            issue.AdminNotes = request.AdminNotes;
-            issue.UpdatedAt = DateTime.UtcNow;
+            await using var transaction = await context.Database.BeginTransactionAsync();
 
-            // Create admin action record
-            context.AdminActions.Add(new AdminAction
+            try
             {
-                Id = Guid.NewGuid(),
-                IssueId = issueId,
-                AdminUserId = adminUser.Id,
-                AdminSupabaseId = adminUserId,
-                ActionType = AdminActionType.Approve,
-                Notes = request.AdminNotes,
-                PreviousStatus = previousStatus,
-                NewStatus = IssueStatus.Active.ToString(),
-                CreatedAt = DateTime.UtcNow
-            });
+                // Update issue
+                var previousStatus = issue.Status.ToString();
+                issue.Status = IssueStatus.Active;
+                issue.ReviewedAt = DateTime.UtcNow;
+                issue.ReviewedBy = adminUser.DisplayName;
+                issue.AdminNotes = request.AdminNotes;
+                issue.UpdatedAt = DateTime.UtcNow;
 
-            // Award points and badges (don't save yet - accumulate all changes)
-            await gamificationService.AwardPointsAsync(issue.UserId, 50, $"Issue approved: {issue.Title}", saveChanges: false);
-            await gamificationService.CheckAndAwardBadgesAsync(issue.UserId, saveChanges: false);
+                // Create admin action record
+                context.AdminActions.Add(new AdminAction
+                {
+                    Id = Guid.NewGuid(),
+                    IssueId = issueId,
+                    AdminUserId = adminUser.Id,
+                    AdminSupabaseId = adminUserId,
+                    ActionType = AdminActionType.Approve,
+                    Notes = request.AdminNotes,
+                    PreviousStatus = previousStatus,
+                    NewStatus = IssueStatus.Active.ToString(),
+                    CreatedAt = DateTime.UtcNow
+                });
 
-            // Single atomic save for all changes (issue, admin action, points, badges)
-            await context.SaveChangesAsync();
+                // Award points and badges (don't save yet - accumulate all changes)
+                await gamificationService.AwardPointsAsync(issue.UserId, 50, $"Issue approved: {issue.Title}", saveChanges: false);
+                await gamificationService.CheckAndAwardBadgesAsync(issue.UserId, saveChanges: false);
 
-            logger.LogInformation(
-                "Issue approved: {IssueId} by admin: {AdminUserId}",
-                issueId,
-                adminUserId);
+                // Single atomic save for all changes (issue, admin action, points, badges)
+                await context.SaveChangesAsync();
+                await transaction.CommitAsync();
 
-            return new IssueActionResponse
+                // Record activity (outside transaction to avoid issues)
+                try
+                {
+                    await activityService.RecordActivityAsync(
+                        ActivityType.IssueApproved,
+                        issueId,
+                        adminUser.Id);
+                }
+                catch (Exception activityEx)
+                {
+                    logger.LogError(activityEx, "Failed to record IssueApproved activity for issue {IssueId}", issueId);
+                }
+
+                logger.LogInformation(
+                    "Issue approved: {IssueId} by admin: {AdminUserId}",
+                    issueId,
+                    adminUserId);
+
+                return new IssueActionResponse
+                {
+                    Success = true,
+                    Message = "Issue approved successfully",
+                    IssueId = issueId,
+                    NewStatus = IssueStatus.Active.ToString(),
+                    UpdatedAt = DateTime.UtcNow
+                };
+            }
+            catch
             {
-                Success = true,
-                Message = "Issue approved successfully",
-                IssueId = issueId,
-                NewStatus = IssueStatus.Active.ToString(),
-                UpdatedAt = DateTime.UtcNow
-            };
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error approving issue: {IssueId}", issueId);
-
-            return new IssueActionResponse
-            {
-                Success = false,
-                Message = "An error occurred while approving the issue"
-            };
-        }
+                await transaction.RollbackAsync();
+                throw;
+            }
+        });
     }
 
     public async Task<IssueActionResponse> RejectIssueAsync(Guid issueId, RejectIssueRequest request, string adminUserId)
     {
-        try
+        // Use execution strategy to handle transient failures with proper transaction support
+        var strategy = context.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync(async () =>
         {
+            // Clear change tracker to ensure fresh data on retry
+            context.ChangeTracker.Clear();
+
             Issue? issue = await context.Issues
                 .FirstOrDefaultAsync(i => i.Id == issueId);
 
@@ -323,62 +352,69 @@ public class AdminService(
                 };
             }
 
-            // Update issue
-            var previousStatus = issue.Status.ToString();
-            issue.Status = IssueStatus.Rejected;
-            issue.ReviewedAt = DateTime.UtcNow;
-            issue.ReviewedBy = adminUser.DisplayName;
-            issue.RejectionReason = request.Reason;
-            issue.AdminNotes = request.InternalNotes;
-            issue.UpdatedAt = DateTime.UtcNow;
+            await using var transaction = await context.Database.BeginTransactionAsync();
 
-            // Create admin action record
-            context.AdminActions.Add(new AdminAction
+            try
             {
-                Id = Guid.NewGuid(),
-                IssueId = issueId,
-                AdminUserId = adminUser.Id,
-                AdminSupabaseId = adminUserId,
-                ActionType = AdminActionType.Reject,
-                Notes = $"Reason: {request.Reason}. Internal notes: {request.InternalNotes}",
-                PreviousStatus = previousStatus,
-                NewStatus = IssueStatus.Rejected.ToString(),
-                CreatedAt = DateTime.UtcNow
-            });
+                // Update issue
+                var previousStatus = issue.Status.ToString();
+                issue.Status = IssueStatus.Rejected;
+                issue.ReviewedAt = DateTime.UtcNow;
+                issue.ReviewedBy = adminUser.DisplayName;
+                issue.RejectionReason = request.Reason;
+                issue.AdminNotes = request.InternalNotes;
+                issue.UpdatedAt = DateTime.UtcNow;
 
-            await context.SaveChangesAsync();
+                // Create admin action record
+                context.AdminActions.Add(new AdminAction
+                {
+                    Id = Guid.NewGuid(),
+                    IssueId = issueId,
+                    AdminUserId = adminUser.Id,
+                    AdminSupabaseId = adminUserId,
+                    ActionType = AdminActionType.Reject,
+                    Notes = $"Reason: {request.Reason}. Internal notes: {request.InternalNotes}",
+                    PreviousStatus = previousStatus,
+                    NewStatus = IssueStatus.Rejected.ToString(),
+                    CreatedAt = DateTime.UtcNow
+                });
 
-            logger.LogInformation(
-                "Issue rejected: {IssueId} by admin: {AdminUserId}. Reason: {Reason}",
-                issueId,
-                adminUserId,
-                request.Reason);
+                await context.SaveChangesAsync();
+                await transaction.CommitAsync();
 
-            return new IssueActionResponse
+                logger.LogInformation(
+                    "Issue rejected: {IssueId} by admin: {AdminUserId}. Reason: {Reason}",
+                    issueId,
+                    adminUserId,
+                    request.Reason);
+
+                return new IssueActionResponse
+                {
+                    Success = true,
+                    Message = "Issue rejected",
+                    IssueId = issueId,
+                    NewStatus = IssueStatus.Rejected.ToString(),
+                    UpdatedAt = DateTime.UtcNow
+                };
+            }
+            catch
             {
-                Success = true,
-                Message = "Issue rejected",
-                IssueId = issueId,
-                NewStatus = IssueStatus.Rejected.ToString(),
-                UpdatedAt = DateTime.UtcNow
-            };
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error rejecting issue: {IssueId}", issueId);
-
-            return new IssueActionResponse
-            {
-                Success = false,
-                Message = "An error occurred while rejecting the issue"
-            };
-        }
+                await transaction.RollbackAsync();
+                throw;
+            }
+        });
     }
 
     public async Task<IssueActionResponse> RequestChangesAsync(Guid issueId, RequestChangesRequest request, string adminUserId)
     {
-        try
+        // Use execution strategy to handle transient failures with proper transaction support
+        var strategy = context.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync(async () =>
         {
+            // Clear change tracker to ensure fresh data on retry
+            context.ChangeTracker.Clear();
+
             Issue? issue = await context.Issues
                 .FirstOrDefaultAsync(i => i.Id == issueId);
 
@@ -403,52 +439,53 @@ public class AdminService(
                 };
             }
 
-            // Update issue
-            var previousStatus = issue.Status.ToString();
-            issue.Status = IssueStatus.UnderReview;
-            issue.AdminNotes = request.RequestedChanges;
-            issue.UpdatedAt = DateTime.UtcNow;
+            await using var transaction = await context.Database.BeginTransactionAsync();
 
-            // Create admin action record
-            context.AdminActions.Add(new AdminAction
+            try
             {
-                Id = Guid.NewGuid(),
-                IssueId = issueId,
-                AdminUserId = adminUser.Id,
-                AdminSupabaseId = adminUserId,
-                ActionType = AdminActionType.RequestChanges,
-                Notes = request.RequestedChanges,
-                PreviousStatus = previousStatus,
-                NewStatus = IssueStatus.UnderReview.ToString(),
-                CreatedAt = DateTime.UtcNow
-            });
+                // Update issue
+                var previousStatus = issue.Status.ToString();
+                issue.Status = IssueStatus.UnderReview;
+                issue.AdminNotes = request.RequestedChanges;
+                issue.UpdatedAt = DateTime.UtcNow;
 
-            await context.SaveChangesAsync();
+                // Create admin action record
+                context.AdminActions.Add(new AdminAction
+                {
+                    Id = Guid.NewGuid(),
+                    IssueId = issueId,
+                    AdminUserId = adminUser.Id,
+                    AdminSupabaseId = adminUserId,
+                    ActionType = AdminActionType.RequestChanges,
+                    Notes = request.RequestedChanges,
+                    PreviousStatus = previousStatus,
+                    NewStatus = IssueStatus.UnderReview.ToString(),
+                    CreatedAt = DateTime.UtcNow
+                });
 
-            logger.LogInformation(
-                "Changes requested for issue: {IssueId} by admin: {AdminUserId}",
-                issueId,
-                adminUserId);
+                await context.SaveChangesAsync();
+                await transaction.CommitAsync();
 
-            return new IssueActionResponse
+                logger.LogInformation(
+                    "Changes requested for issue: {IssueId} by admin: {AdminUserId}",
+                    issueId,
+                    adminUserId);
+
+                return new IssueActionResponse
+                {
+                    Success = true,
+                    Message = "Changes requested successfully",
+                    IssueId = issueId,
+                    NewStatus = IssueStatus.UnderReview.ToString(),
+                    UpdatedAt = DateTime.UtcNow
+                };
+            }
+            catch
             {
-                Success = true,
-                Message = "Changes requested successfully",
-                IssueId = issueId,
-                NewStatus = IssueStatus.UnderReview.ToString(),
-                UpdatedAt = DateTime.UtcNow
-            };
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error requesting changes for issue: {IssueId}", issueId);
-
-            return new IssueActionResponse
-            {
-                Success = false,
-                Message = "An error occurred while requesting changes"
-            };
-        }
+                await transaction.RollbackAsync();
+                throw;
+            }
+        });
     }
 
     public async Task<AdminStatisticsResponse> GetStatisticsAsync(string period = "30d")
@@ -470,48 +507,51 @@ public class AdminService(
             DateTime weekStart = DateTime.SpecifyKind(now.AddDays(-(int)now.DayOfWeek).Date, DateTimeKind.Utc);
             DateTime monthStart = DateTime.SpecifyKind(new DateTime(now.Year, now.Month, 1), DateTimeKind.Utc);
 
-            // Get all issues for counting
-            List<Issue> allIssues = await context.Issues.ToListAsync();
-            List<Issue> periodIssues = startDate != DateTime.MinValue.ToUniversalTime()
-                ? allIssues.Where(i => i.CreatedAt >= startDate).ToList()
-                : allIssues;
+            // Build base query with period filter - all aggregations happen in the database
+            IQueryable<Issue> periodQuery = startDate != DateTime.MinValue.ToUniversalTime()
+                ? context.Issues.Where(i => i.CreatedAt >= startDate)
+                : context.Issues;
 
-            // Count by status
-            Dictionary<IssueStatus, int> statusCounts = periodIssues
+            // Count by status using database aggregation
+            var statusCountsRaw = await periodQuery
                 .GroupBy(i => i.Status)
-                .ToDictionary(g => g.Key, g => g.Count());
+                .Select(g => new { Status = g.Key, Count = g.Count() })
+                .ToListAsync();
+            Dictionary<IssueStatus, int> statusCounts = statusCountsRaw.ToDictionary(x => x.Status, x => x.Count);
 
-            // Count submissions by time
-            var submissionsToday = allIssues.Count(i => i.CreatedAt.Date == today);
-            var submissionsThisWeek = allIssues.Count(i => i.CreatedAt >= weekStart);
-            var submissionsThisMonth = allIssues.Count(i => i.CreatedAt >= monthStart);
+            // Count submissions by time using database queries
+            var submissionsToday = await context.Issues.CountAsync(i => i.CreatedAt >= today);
+            var submissionsThisWeek = await context.Issues.CountAsync(i => i.CreatedAt >= weekStart);
+            var submissionsThisMonth = await context.Issues.CountAsync(i => i.CreatedAt >= monthStart);
 
-            // Admin activity
-            List<AdminAction> adminActions = await context.AdminActions
-                .Where(aa => aa.CreatedAt >= startDate)
+            // Admin activity counts using database aggregation
+            var reviewedToday = await context.AdminActions.CountAsync(aa => aa.CreatedAt >= today);
+            var reviewedThisWeek = await context.AdminActions.CountAsync(aa => aa.CreatedAt >= weekStart);
+            var reviewedThisMonth = await context.AdminActions.CountAsync(aa => aa.CreatedAt >= monthStart);
+
+            // Calculate average review time using database projection
+            var reviewTimeData = await context.Issues
+                .Where(i => i.ReviewedAt.HasValue && (startDate == DateTime.MinValue.ToUniversalTime() || i.CreatedAt >= startDate))
+                .Select(i => new { ReviewedAt = i.ReviewedAt!.Value, i.CreatedAt })
                 .ToListAsync();
 
-            var reviewedToday = adminActions.Count(aa => aa.CreatedAt.Date == today);
-            var reviewedThisWeek = adminActions.Count(aa => aa.CreatedAt >= weekStart);
-            var reviewedThisMonth = adminActions.Count(aa => aa.CreatedAt >= monthStart);
-
-            // Calculate average review time
-            List<Issue> reviewedIssues = await context.Issues
-                .Where(i => i.ReviewedAt.HasValue && i.CreatedAt >= startDate)
-                .ToListAsync();
-
-            var avgReviewTime = reviewedIssues.Any()
-                ? reviewedIssues.Average(i => (i.ReviewedAt!.Value - i.CreatedAt).TotalHours)
+            var avgReviewTime = reviewTimeData.Count != 0
+                ? reviewTimeData.Average(i => (i.ReviewedAt - i.CreatedAt).TotalHours)
                 : 0;
 
-            // Category breakdown
-            Dictionary<string, int> categoryBreakdown = periodIssues
-                .GroupBy(i => i.Category.ToString())
-                .ToDictionary(g => g.Key, g => g.Count());
+            // Category breakdown using database aggregation
+            var categoryCountsRaw = await periodQuery
+                .GroupBy(i => i.Category)
+                .Select(g => new { Category = g.Key, Count = g.Count() })
+                .ToListAsync();
+            Dictionary<string, int> categoryBreakdown = categoryCountsRaw.ToDictionary(x => x.Category.ToString(), x => x.Count);
 
-            Dictionary<string, int> urgencyBreakdown = periodIssues
-                .GroupBy(i => i.Urgency.ToString())
-                .ToDictionary(g => g.Key, g => g.Count());
+            // Urgency breakdown using database aggregation
+            var urgencyCountsRaw = await periodQuery
+                .GroupBy(i => i.Urgency)
+                .Select(g => new { Urgency = g.Key, Count = g.Count() })
+                .ToListAsync();
+            Dictionary<string, int> urgencyBreakdown = urgencyCountsRaw.ToDictionary(x => x.Urgency.ToString(), x => x.Count);
 
             // User statistics
             var totalUsers = await context.UserProfiles.CountAsync();
@@ -524,7 +564,7 @@ public class AdminService(
             var totalEmailsSent = await context.Issues.SumAsync(i => i.EmailsSent);
 
             // Performance metrics
-            var totalIssues = periodIssues.Count;
+            var totalIssues = await periodQuery.CountAsync();
             var activeCount = statusCounts.GetValueOrDefault(IssueStatus.Active, 0);
             var rejectedCount = statusCounts.GetValueOrDefault(IssueStatus.Rejected, 0);
             var resolvedCount = statusCounts.GetValueOrDefault(IssueStatus.Resolved, 0);
@@ -574,8 +614,23 @@ public class AdminService(
         }
     }
 
+    private const int MaxBulkApproveLimit = 50;
+
     public async Task<BulkApproveResponse> BulkApproveIssuesAsync(BulkApproveRequest request, string adminUserId)
     {
+        // Validate bulk operation size to prevent timeouts and resource exhaustion
+        if (request.IssueIds.Count > MaxBulkApproveLimit)
+        {
+            return new BulkApproveResponse
+            {
+                TotalRequested = request.IssueIds.Count,
+                SuccessfullyApproved = 0,
+                Failed = request.IssueIds.Count,
+                Message = $"Cannot approve more than {MaxBulkApproveLimit} issues at once. Please reduce the batch size.",
+                Results = []
+            };
+        }
+
         BulkApproveResponse response = new()
         {
             TotalRequested = request.IssueIds.Count,

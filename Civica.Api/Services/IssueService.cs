@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Civica.Api.Services.Interfaces;
 using Civica.Api.Models.Requests.Issues;
 using Civica.Api.Models.Responses.Issues;
@@ -15,10 +17,17 @@ public class IssueService(
     ILogger<IssueService> logger,
     CivicaDbContext context,
     IGamificationService gamificationService,
-    IMemoryCache memoryCache)
+    IMemoryCache memoryCache,
+    IActivityService activityService)
     : IIssueService
 {
     private static readonly TimeSpan EmailCooldownDuration = TimeSpan.FromHours(1);
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
 
     /// <summary>
     /// Error message returned when rate limited. Used by endpoint to detect 429 response.
@@ -353,7 +362,21 @@ public class IssueService(
 
             await transaction.CommitAsync();
 
-            logger.LogInformation("Issue {IssueId} created successfully by user {UserId}", 
+            // Record activity (outside transaction to avoid circular dependency issues)
+            try
+            {
+                await activityService.RecordActivityAsync(
+                    Models.Domain.ActivityType.IssueCreated,
+                    issue.Id,
+                    userProfile.Id);
+            }
+            catch (Exception activityEx)
+            {
+                // Log but don't fail the issue creation if activity recording fails
+                logger.LogError(activityEx, "Failed to record IssueCreated activity for issue {IssueId}", issue.Id);
+            }
+
+            logger.LogInformation("Issue {IssueId} created successfully by user {UserId}",
                 issue.Id, userProfile.Id);
 
             return new CreateIssueResponse
@@ -422,6 +445,17 @@ public class IssueService(
 
             // Set cooldown in cache
             memoryCache.Set(cacheKey, true, EmailCooldownDuration);
+
+            // Record supporter activity (with 1-hour aggregation)
+            try
+            {
+                await activityService.RecordSupporterActivityAsync(issueId);
+            }
+            catch (Exception activityEx)
+            {
+                // Log but don't fail the email increment if activity recording fails
+                logger.LogError(activityEx, "Failed to record supporter activity for issue {IssueId}", issueId);
+            }
 
             logger.LogInformation("Email count incremented for issue {IssueId}", issueId);
 
@@ -612,6 +646,26 @@ public class IssueService(
                 }
 
                 await transaction.CommitAsync();
+
+                // Record activity (outside transaction)
+                try
+                {
+                    var activityType = request.Status == IssueStatus.Resolved
+                        ? Models.Domain.ActivityType.IssueResolved
+                        : Models.Domain.ActivityType.StatusChange;
+
+                    var metadata = JsonSerializer.Serialize(new { previousStatus, newStatus = request.Status }, JsonOptions);
+
+                    await activityService.RecordActivityAsync(
+                        activityType,
+                        issueId,
+                        userProfile.Id,
+                        metadata);
+                }
+                catch (Exception activityEx)
+                {
+                    logger.LogError(activityEx, "Failed to record status change activity for issue {IssueId}", issueId);
+                }
 
                 logger.LogInformation("Issue {IssueId} status changed to {NewStatus} by user {UserId}",
                     issueId, request.Status, userProfile.Id);
