@@ -647,7 +647,7 @@ public class IssueService(
                         ? Models.Domain.ActivityType.IssueResolved
                         : Models.Domain.ActivityType.StatusChange;
 
-                    var metadata = JsonSerializer.Serialize(new { previousStatus, newStatus = request.Status.ToString() });
+                    var metadata = JsonSerializer.Serialize(new { previousStatus = previousStatus.ToString(), newStatus = request.Status.ToString() });
 
                     await activityService.RecordActivityAsync(
                         activityType,

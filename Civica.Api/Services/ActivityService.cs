@@ -107,21 +107,23 @@ public class ActivityService(
             }
 
             var windowStart = DateTime.UtcNow.Subtract(SupporterAggregationWindow);
+            var now = DateTime.UtcNow;
 
-            Activity? existingActivity = await context.Activities
+            // Use atomic update to prevent race conditions
+            // Note: Using string concatenation for Metadata since EF Core can translate it to SQL
+            var updatedCount = await context.Activities
                 .Where(a => a.IssueId == issueId
                          && a.Type == ActivityType.NewSupporters
                          && a.CreatedAt >= windowStart)
                 .OrderByDescending(a => a.CreatedAt)
-                .FirstOrDefaultAsync();
+                .Take(1)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(a => a.AggregatedCount, a => a.AggregatedCount + 1)
+                    .SetProperty(a => a.CreatedAt, now)
+                    .SetProperty(a => a.Metadata, a => "{\"supporterCount\":" + (a.AggregatedCount + 1) + "}"));
 
-            if (existingActivity != null)
-            {
-                existingActivity.AggregatedCount++;
-                existingActivity.CreatedAt = DateTime.UtcNow;
-                existingActivity.Metadata = SerializeSupporterMetadata(existingActivity.AggregatedCount);
-            }
-            else
+            // If no existing activity was updated, create a new one
+            if (updatedCount == 0)
             {
                 var activity = new Activity
                 {
@@ -132,13 +134,12 @@ public class ActivityService(
                     IssueTitle = issue.Title,
                     AggregatedCount = 1,
                     Metadata = SerializeSupporterMetadata(1),
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = now
                 };
 
                 context.Activities.Add(activity);
+                await context.SaveChangesAsync();
             }
-
-            await context.SaveChangesAsync();
 
             logger.LogDebug("Recorded supporter activity for issue {IssueId}", issueId);
         }
@@ -163,21 +164,25 @@ public class ActivityService(
             query = query.Where(a => a.CreatedAt >= request.Since.Value);
         }
 
+        // Ensure PageSize is at least 1 to prevent division by zero
+        var pageSize = Math.Max(1, request.PageSize);
+        var page = Math.Max(1, request.Page);
+
         var totalCount = await query.CountAsync();
 
         var activities = await query
             .OrderByDescending(a => a.CreatedAt)
-            .Skip((request.Page - 1) * request.PageSize)
-            .Take(request.PageSize)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .ToListAsync();
 
         return new PagedResult<ActivityResponse>
         {
             Items = activities.Select(MapToResponse).ToList(),
             TotalItems = totalCount,
-            Page = request.Page,
-            PageSize = request.PageSize,
-            TotalPages = (int)Math.Ceiling(totalCount / (double)request.PageSize)
+            Page = page,
+            PageSize = pageSize,
+            TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
         };
     }
 
