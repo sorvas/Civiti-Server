@@ -368,15 +368,7 @@ forwardedHeadersOptions.KnownNetworks.Clear();
 forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
 
-// Configure pipeline~~~
-// Enable Swagger in both Development and Production for Railway deployment
-app.UseSwagger();
-app.UseSwaggerUI(options =>
-{
-    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Civica API v1");
-    options.RoutePrefix = "swagger";
-});
-
+// Configure pipeline
 if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();

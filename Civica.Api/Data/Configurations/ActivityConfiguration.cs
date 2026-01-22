@@ -15,7 +15,7 @@ public class ActivityConfiguration : IEntityTypeConfiguration<Activity>
             .HasMaxLength(30);
 
         builder.Property(a => a.IssueTitle)
-            .HasMaxLength(200)
+            .HasMaxLength(500) // Aligned with Issue.Title max length
             .IsRequired();
 
         builder.Property(a => a.ActorDisplayName)

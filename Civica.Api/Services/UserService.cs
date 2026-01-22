@@ -83,18 +83,8 @@ public class UserService(
                 return null;
             }
 
-            // Track login streak (once per day)
-            await UpdateLoginStreakAsync(user.Id);
-
-            // Reload user to get updated streak values after potential modification
-            user = await context.UserProfiles.AsNoTracking().FirstOrDefaultAsync(u => u.Id == user.Id);
-
-            // Handle rare case where user was deleted during streak update
-            if (user == null)
-            {
-                logger.LogWarning("User was deleted during profile load for Supabase ID: {SupabaseUserId}", supabaseUserId);
-                return null;
-            }
+            // Track login streak (once per day) and get updated user data in a single operation
+            user = await UpdateLoginStreakAsync(user.Id) ?? user;
 
             UserGamificationResponse gamification = await GetUserGamificationAsync(supabaseUserId);
 
@@ -197,13 +187,13 @@ public class UserService(
         }
     }
 
-    private async Task UpdateLoginStreakAsync(Guid userId)
+    private async Task<UserProfile?> UpdateLoginStreakAsync(Guid userId)
     {
         // Use execution strategy to handle transient failures
         // Re-fetch user inside callback to ensure fresh data on retry
         var strategy = context.Database.CreateExecutionStrategy();
 
-        await strategy.ExecuteAsync(async () =>
+        return await strategy.ExecuteAsync(async () =>
         {
             // Clear change tracker to ensure fresh data on retry
             context.ChangeTracker.Clear();
@@ -217,16 +207,18 @@ public class UserService(
                 if (user == null)
                 {
                     logger.LogWarning("User {UserId} not found for login streak update", userId);
-                    return;
+                    return null;
                 }
 
                 var today = DateTime.UtcNow.Date;
                 var lastActivityDate = user.LastActivityDate.Date;
 
-                // Skip if already updated today
+                // Skip if already updated today - return current user data
                 if (lastActivityDate == today)
                 {
-                    return;
+                    // Detach entity and return a copy to avoid tracking issues
+                    context.Entry(user).State = EntityState.Detached;
+                    return user;
                 }
 
                 var previousStreak = user.CurrentLoginStreak;
@@ -269,6 +261,10 @@ public class UserService(
 
                 // Commit only after all operations succeed
                 await transaction.CommitAsync();
+
+                // Detach entity and return to avoid tracking issues with subsequent queries
+                context.Entry(user).State = EntityState.Detached;
+                return user;
             }
             catch (Exception ex)
             {

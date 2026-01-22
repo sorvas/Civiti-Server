@@ -65,7 +65,7 @@ public class GamificationService(
                 return;
             }
 
-            HashSet<Guid> earnedBadgeIds = ((IEnumerable<UserBadge>)user.UserBadges).Select(ub => ub.BadgeId).ToHashSet();
+            HashSet<Guid> earnedBadgeIds = user.UserBadges.Select(ub => ub.BadgeId).ToHashSet();
             List<Badge> allBadges = await context.Badges.Where(b => b.IsActive).ToListAsync();
 
             foreach (Badge badge in allBadges)

@@ -6,6 +6,7 @@ using Civica.Api.Models.Responses.Activity;
 using Civica.Api.Models.Responses.Common;
 using Civica.Api.Data;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace Civica.Api.Services;
 
@@ -15,6 +16,11 @@ public class ActivityService(
     : IActivityService
 {
     private static readonly TimeSpan SupporterAggregationWindow = TimeSpan.FromHours(1);
+    private const int MaxIssueTitleLength = 500; // Aligned with Issue.Title and ActivityConfiguration
+    private const int MaxRetryAttempts = 3;
+
+    // PostgreSQL error code for unique constraint violation
+    private const string UniqueViolationSqlState = "23505";
 
     public async Task<PagedResult<ActivityResponse>> GetUserActivitiesAsync(Guid userId, GetActivitiesRequest request)
     {
@@ -73,7 +79,7 @@ public class ActivityService(
                 IssueId = issueId,
                 IssueOwnerUserId = issue.UserId,
                 ActorUserId = actorUserId,
-                IssueTitle = issue.Title,
+                IssueTitle = TruncateTitle(issue.Title),
                 ActorDisplayName = actor?.DisplayName,
                 Metadata = metadata,
                 AggregatedCount = 1,
@@ -109,8 +115,8 @@ public class ActivityService(
             var windowStart = DateTime.UtcNow.Subtract(SupporterAggregationWindow);
             var now = DateTime.UtcNow;
 
-            // Use atomic update to prevent race conditions
-            // Note: Using string concatenation for Metadata since EF Core can translate it to SQL
+            // Use atomic update for count increment to prevent race conditions
+            // Metadata is updated separately (eventual consistency is acceptable for activity feed)
             var updatedCount = await context.Activities
                 .Where(a => a.IssueId == issueId
                          && a.Type == ActivityType.NewSupporters
@@ -119,26 +125,17 @@ public class ActivityService(
                 .Take(1)
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(a => a.AggregatedCount, a => a.AggregatedCount + 1)
-                    .SetProperty(a => a.CreatedAt, now)
-                    .SetProperty(a => a.Metadata, a => "{\"supporterCount\":" + (a.AggregatedCount + 1) + "}"));
+                    .SetProperty(a => a.CreatedAt, now));
 
-            // If no existing activity was updated, create a new one
-            if (updatedCount == 0)
+            if (updatedCount > 0)
             {
-                var activity = new Activity
-                {
-                    Id = Guid.NewGuid(),
-                    Type = ActivityType.NewSupporters,
-                    IssueId = issueId,
-                    IssueOwnerUserId = issue.UserId,
-                    IssueTitle = issue.Title,
-                    AggregatedCount = 1,
-                    Metadata = SerializeSupporterMetadata(1),
-                    CreatedAt = now
-                };
-
-                context.Activities.Add(activity);
-                await context.SaveChangesAsync();
+                // Update metadata separately - eventual consistency is acceptable
+                await UpdateSupporterMetadataAsync(issueId, windowStart);
+            }
+            else
+            {
+                // No existing activity - create new one with retry logic for TOCTOU race
+                await CreateSupporterActivityWithRetryAsync(issue, windowStart, now);
             }
 
             logger.LogDebug("Recorded supporter activity for issue {IssueId}", issueId);
@@ -148,6 +145,97 @@ public class ActivityService(
             logger.LogError(ex, "Error recording supporter activity for issue: {IssueId}", issueId);
             throw;
         }
+    }
+
+    private async Task UpdateSupporterMetadataAsync(Guid issueId, DateTime windowStart)
+    {
+        try
+        {
+            var activity = await context.Activities
+                .Where(a => a.IssueId == issueId
+                         && a.Type == ActivityType.NewSupporters
+                         && a.CreatedAt >= windowStart)
+                .OrderByDescending(a => a.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (activity != null)
+            {
+                activity.Metadata = SerializeSupporterMetadata(activity.AggregatedCount);
+                await context.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            // Metadata update failure is non-critical - log and continue
+            logger.LogWarning(ex, "Failed to update supporter metadata for issue {IssueId}", issueId);
+        }
+    }
+
+    private async Task CreateSupporterActivityWithRetryAsync(Issue issue, DateTime windowStart, DateTime now)
+    {
+        for (var attempt = 1; attempt <= MaxRetryAttempts; attempt++)
+        {
+            var activity = new Activity
+            {
+                Id = Guid.NewGuid(),
+                Type = ActivityType.NewSupporters,
+                IssueId = issue.Id,
+                IssueOwnerUserId = issue.UserId,
+                IssueTitle = TruncateTitle(issue.Title),
+                AggregatedCount = 1,
+                Metadata = SerializeSupporterMetadata(1),
+                CreatedAt = now
+            };
+
+            try
+            {
+                context.Activities.Add(activity);
+                await context.SaveChangesAsync();
+                return; // Success
+            }
+            catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+            {
+                // Another concurrent request created the activity - retry with atomic update
+                context.Entry(activity).State = EntityState.Detached;
+
+                var updatedCount = await context.Activities
+                    .Where(a => a.IssueId == issue.Id
+                             && a.Type == ActivityType.NewSupporters
+                             && a.CreatedAt >= windowStart)
+                    .OrderByDescending(a => a.CreatedAt)
+                    .Take(1)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(a => a.AggregatedCount, a => a.AggregatedCount + 1)
+                        .SetProperty(a => a.CreatedAt, now));
+
+                if (updatedCount > 0)
+                {
+                    await UpdateSupporterMetadataAsync(issue.Id, windowStart);
+                    return; // Success via update
+                }
+
+                logger.LogWarning(
+                    "Retry attempt {Attempt}/{MaxAttempts} for supporter activity on issue {IssueId}",
+                    attempt, MaxRetryAttempts, issue.Id);
+            }
+            catch (DbUpdateException ex)
+            {
+                // Non-constraint violation - detach and rethrow
+                context.Entry(activity).State = EntityState.Detached;
+                throw new InvalidOperationException(
+                    $"Failed to create supporter activity for issue {issue.Id}", ex);
+            }
+        }
+
+        logger.LogError(
+            "Failed to record supporter activity after {MaxAttempts} attempts for issue {IssueId}",
+            MaxRetryAttempts, issue.Id);
+    }
+
+    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
+    {
+        return ex.InnerException is PostgresException pgEx &&
+               pgEx.SqlState == UniqueViolationSqlState;
     }
 
     private async Task<PagedResult<ActivityResponse>> ExecutePagedQueryAsync(
@@ -189,6 +277,14 @@ public class ActivityService(
     private static string SerializeSupporterMetadata(int supporterCount)
     {
         return JsonSerializer.Serialize(new { supporterCount });
+    }
+
+    private static string TruncateTitle(string title)
+    {
+        if (string.IsNullOrEmpty(title) || title.Length <= MaxIssueTitleLength)
+            return title;
+
+        return title[..MaxIssueTitleLength];
     }
 
     private static ActivityResponse MapToResponse(Activity activity)

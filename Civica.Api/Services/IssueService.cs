@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Civica.Api.Services.Interfaces;
 using Civica.Api.Models.Requests.Issues;
 using Civica.Api.Models.Responses.Issues;
@@ -21,6 +22,12 @@ public class IssueService(
     : IIssueService
 {
     private static readonly TimeSpan EmailCooldownDuration = TimeSpan.FromHours(1);
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
 
     /// <summary>
     /// Error message returned when rate limited. Used by endpoint to detect 429 response.
@@ -647,7 +654,7 @@ public class IssueService(
                         ? Models.Domain.ActivityType.IssueResolved
                         : Models.Domain.ActivityType.StatusChange;
 
-                    var metadata = JsonSerializer.Serialize(new { previousStatus = previousStatus.ToString(), newStatus = request.Status.ToString() });
+                    var metadata = JsonSerializer.Serialize(new { previousStatus, newStatus = request.Status }, JsonOptions);
 
                     await activityService.RecordActivityAsync(
                         activityType,
