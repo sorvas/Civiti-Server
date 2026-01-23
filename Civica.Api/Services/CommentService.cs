@@ -339,19 +339,53 @@ public class CommentService(
             comment.DeletedByUserId = user.Id;
             comment.UpdatedAt = DateTime.UtcNow;
 
-            // Also soft-delete any replies to prevent orphaned comments
-            var replyCount = await context.Comments
+            // Get replies that will be cascade-deleted and have helpful votes
+            var repliesToDelete = await context.Comments
                 .Where(c => c.ParentCommentId == commentId && !c.IsDeleted)
-                .ExecuteUpdateAsync(c => c
-                    .SetProperty(x => x.IsDeleted, true)
-                    .SetProperty(x => x.DeletedByUserId, user.Id)
-                    .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
+                .Select(c => new { c.Id, c.UserId, c.HelpfulCount })
+                .ToListAsync();
 
-            if (replyCount > 0)
+            if (repliesToDelete.Count > 0)
             {
+                // Clean up helpful vote stats for each reply author
+                var replyStatsByUser = repliesToDelete
+                    .Where(r => r.HelpfulCount > 0)
+                    .GroupBy(r => r.UserId)
+                    .Select(g => new { UserId = g.Key, TotalHelpfulCount = g.Sum(r => r.HelpfulCount) })
+                    .ToList();
+
+                foreach (var replyStat in replyStatsByUser)
+                {
+                    // Deduct HelpfulComments stat from reply author
+                    await context.UserProfiles
+                        .Where(u => u.Id == replyStat.UserId)
+                        .ExecuteUpdateAsync(u => u
+                            .SetProperty(x => x.HelpfulComments, x => Math.Max(0, x.HelpfulComments - replyStat.TotalHelpfulCount))
+                            .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
+
+                    // Deduct points for each helpful vote received on replies
+                    var pointsToDeduct = replyStat.TotalHelpfulCount * PointsForHelpfulVote;
+                    await gamificationService.DeductPointsAsync(
+                        replyStat.UserId,
+                        pointsToDeduct,
+                        "reply_cascade_deleted_votes_removed");
+
+                    logger.LogInformation(
+                        "Deducted {Points} points and {VoteCount} helpful comments from user {UserId} due to reply cascade deletion",
+                        pointsToDeduct, replyStat.TotalHelpfulCount, replyStat.UserId);
+                }
+
+                // Soft-delete all replies
+                await context.Comments
+                    .Where(c => c.ParentCommentId == commentId && !c.IsDeleted)
+                    .ExecuteUpdateAsync(c => c
+                        .SetProperty(x => x.IsDeleted, true)
+                        .SetProperty(x => x.DeletedByUserId, user.Id)
+                        .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
+
                 logger.LogInformation(
                     "Soft-deleted {ReplyCount} replies along with parent comment {CommentId}",
-                    replyCount, commentId);
+                    repliesToDelete.Count, commentId);
             }
 
             await context.SaveChangesAsync();
