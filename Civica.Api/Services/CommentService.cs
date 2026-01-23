@@ -331,7 +331,24 @@ public class CommentService(
                 return (true, null); // Return success - delete is idempotent
             }
 
-            // Now safely adjust helpful vote stats (only one request reaches here)
+            // Deduct comment creation points from the author
+            await gamificationService.DeductPointsAsync(
+                comment.UserId,
+                PointsForComment,
+                "comment_deleted");
+
+            // Decrement the user's CommentsGiven stat
+            await context.UserProfiles
+                .Where(u => u.Id == comment.UserId)
+                .ExecuteUpdateAsync(u => u
+                    .SetProperty(x => x.CommentsGiven, x => Math.Max(0, x.CommentsGiven - 1))
+                    .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
+
+            logger.LogInformation(
+                "Deducted {Points} creation points from user {UserId} due to comment deletion",
+                PointsForComment, comment.UserId);
+
+            // Also adjust helpful vote stats if comment had votes
             if (comment.HelpfulCount > 0)
             {
                 // Deduct HelpfulComments stat from comment author
@@ -373,32 +390,58 @@ public class CommentService(
 
             if (allDescendants.Count > 0)
             {
-                // Clean up helpful vote stats for each descendant author
-                var descendantStatsByUser = allDescendants
-                    .Where(r => r.HelpfulCount > 0)
+                // Group all descendants by user for stat adjustments
+                var descendantsByUser = allDescendants
                     .GroupBy(r => r.UserId)
-                    .Select(g => new { UserId = g.Key, TotalHelpfulCount = g.Sum(r => r.HelpfulCount) })
+                    .Select(g => new
+                    {
+                        UserId = g.Key,
+                        CommentCount = g.Count(),
+                        TotalHelpfulCount = g.Sum(r => r.HelpfulCount)
+                    })
                     .ToList();
 
-                foreach (var descendantStat in descendantStatsByUser)
+                foreach (var descendantStat in descendantsByUser)
                 {
-                    // Deduct HelpfulComments stat from descendant author
+                    // Deduct creation points for each cascade-deleted comment
+                    var creationPointsToDeduct = descendantStat.CommentCount * PointsForComment;
+                    await gamificationService.DeductPointsAsync(
+                        descendantStat.UserId,
+                        creationPointsToDeduct,
+                        "reply_cascade_deleted");
+
+                    // Decrement the user's CommentsGiven stat
                     await context.UserProfiles
                         .Where(u => u.Id == descendantStat.UserId)
                         .ExecuteUpdateAsync(u => u
-                            .SetProperty(x => x.HelpfulComments, x => Math.Max(0, x.HelpfulComments - descendantStat.TotalHelpfulCount))
+                            .SetProperty(x => x.CommentsGiven, x => Math.Max(0, x.CommentsGiven - descendantStat.CommentCount))
                             .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
 
-                    // Deduct points for each helpful vote received on descendants
-                    var pointsToDeduct = descendantStat.TotalHelpfulCount * PointsForHelpfulVote;
-                    await gamificationService.DeductPointsAsync(
-                        descendantStat.UserId,
-                        pointsToDeduct,
-                        "reply_cascade_deleted_votes_removed");
-
                     logger.LogInformation(
-                        "Deducted {Points} points and {VoteCount} helpful comments from user {UserId} due to reply cascade deletion",
-                        pointsToDeduct, descendantStat.TotalHelpfulCount, descendantStat.UserId);
+                        "Deducted {Points} creation points and {CommentCount} CommentsGiven from user {UserId} due to reply cascade deletion",
+                        creationPointsToDeduct, descendantStat.CommentCount, descendantStat.UserId);
+
+                    // Also deduct helpful vote stats if any descendants had votes
+                    if (descendantStat.TotalHelpfulCount > 0)
+                    {
+                        // Deduct HelpfulComments stat from descendant author
+                        await context.UserProfiles
+                            .Where(u => u.Id == descendantStat.UserId)
+                            .ExecuteUpdateAsync(u => u
+                                .SetProperty(x => x.HelpfulComments, x => Math.Max(0, x.HelpfulComments - descendantStat.TotalHelpfulCount))
+                                .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
+
+                        // Deduct points for each helpful vote received on descendants
+                        var votePointsToDeduct = descendantStat.TotalHelpfulCount * PointsForHelpfulVote;
+                        await gamificationService.DeductPointsAsync(
+                            descendantStat.UserId,
+                            votePointsToDeduct,
+                            "reply_cascade_deleted_votes_removed");
+
+                        logger.LogInformation(
+                            "Deducted {Points} points and {VoteCount} helpful comments from user {UserId} due to reply cascade deletion",
+                            votePointsToDeduct, descendantStat.TotalHelpfulCount, descendantStat.UserId);
+                    }
                 }
 
                 // Soft-delete all descendants (with !IsDeleted check for concurrent safety)
