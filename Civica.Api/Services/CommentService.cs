@@ -185,68 +185,56 @@ public class CommentService(
             }
 
             // Use serializable transaction to prevent race conditions on rate limit/duplicate checks
+            // Transaction auto-rolls back on disposal if not committed
             await using var transaction = await context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
-            Comment comment;
-            try
+
+            // Rate limit: max 1 comment per 10 seconds per user per issue
+            var recentComment = await context.Comments
+                .Where(c => c.UserId == user.Id
+                    && c.IssueId == issueId
+                    && !c.IsDeleted
+                    && c.CreatedAt > DateTime.UtcNow.AddSeconds(-10))
+                .AnyAsync();
+
+            if (recentComment)
             {
-                // Rate limit: max 1 comment per 10 seconds per user per issue
-                var recentComment = await context.Comments
-                    .Where(c => c.UserId == user.Id
-                        && c.IssueId == issueId
-                        && !c.IsDeleted
-                        && c.CreatedAt > DateTime.UtcNow.AddSeconds(-10))
-                    .AnyAsync();
-
-                if (recentComment)
-                {
-                    throw new InvalidOperationException("Please wait before posting another comment");
-                }
-
-                // Duplicate detection: block identical content within 5 minutes
-                var duplicateExists = await context.Comments
-                    .Where(c => c.UserId == user.Id
-                        && c.IssueId == issueId
-                        && c.Content == trimmedContent
-                        && !c.IsDeleted
-                        && c.CreatedAt > DateTime.UtcNow.AddMinutes(-5))
-                    .AnyAsync();
-
-                if (duplicateExists)
-                {
-                    throw new InvalidOperationException("You have already posted this comment");
-                }
-
-                // Create comment
-                comment = new Comment
-                {
-                    Id = Guid.NewGuid(),
-                    IssueId = issueId,
-                    UserId = user.Id,
-                    Content = trimmedContent,
-                    ParentCommentId = request.ParentCommentId,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-
-                context.Comments.Add(comment);
-
-                // Update user stats
-                user.CommentsGiven++;
-                user.UpdatedAt = DateTime.UtcNow;
-
-                await context.SaveChangesAsync();
-                await transaction.CommitAsync();
+                throw new InvalidOperationException("Please wait before posting another comment");
             }
-            catch (InvalidOperationException)
+
+            // Duplicate detection: block identical content within 5 minutes
+            var duplicateExists = await context.Comments
+                .Where(c => c.UserId == user.Id
+                    && c.IssueId == issueId
+                    && c.Content == trimmedContent
+                    && !c.IsDeleted
+                    && c.CreatedAt > DateTime.UtcNow.AddMinutes(-5))
+                .AnyAsync();
+
+            if (duplicateExists)
             {
-                await transaction.RollbackAsync();
-                throw;
+                throw new InvalidOperationException("You have already posted this comment");
             }
-            catch
+
+            // Create comment
+            var comment = new Comment
             {
-                await transaction.RollbackAsync();
-                throw;
-            }
+                Id = Guid.NewGuid(),
+                IssueId = issueId,
+                UserId = user.Id,
+                Content = trimmedContent,
+                ParentCommentId = request.ParentCommentId,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            context.Comments.Add(comment);
+
+            // Update user stats
+            user.CommentsGiven++;
+            user.UpdatedAt = DateTime.UtcNow;
+
+            await context.SaveChangesAsync();
+            await transaction.CommitAsync();
 
             // Award points (separate transaction)
             await gamificationService.AwardPointsAsync(user.Id, PointsForComment, "comment_created");
