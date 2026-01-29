@@ -5,8 +5,8 @@ using Microsoft.EntityFrameworkCore;
 namespace Civica.Api.Services;
 
 /// <summary>
-/// Seeds static reference data (badges, achievements, authorities) at application startup.
-/// Runs before DemoDataSeeder and is idempotent (checks for existing data before inserting).
+/// Seeds static reference data (badges, achievements) at application startup.
+/// Idempotent (checks for existing data before inserting).
 /// </summary>
 public class StaticDataSeeder : IHostedService
 {
@@ -30,7 +30,6 @@ public class StaticDataSeeder : IHostedService
             using var scope = _serviceProvider.CreateScope();
             var context = scope.ServiceProvider.GetRequiredService<CivicaDbContext>();
 
-            await SeedAuthoritiesAsync(context, cancellationToken);
             await SeedBadgesAsync(context, cancellationToken);
             await SeedAchievementsAsync(context, cancellationToken);
 
@@ -44,160 +43,6 @@ public class StaticDataSeeder : IHostedService
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    private async Task SeedAuthoritiesAsync(CivicaDbContext context, CancellationToken cancellationToken)
-    {
-        if (await context.Authorities.AnyAsync(cancellationToken))
-        {
-            _logger.LogDebug("Authorities already seeded - skipping");
-            return;
-        }
-
-        var createdAt = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-
-        var authorities = new List<Authority>
-        {
-            // Bucharest General
-            new()
-            {
-                Id = Guid.Parse("a0000001-0000-0000-0000-000000000001"),
-                Name = "Primăria Municipiului București",
-                Email = "pmb@pmb.ro",
-                County = "București",
-                City = "București",
-                District = null,
-                IsActive = true,
-                CreatedAt = createdAt
-            },
-            // Bucharest Sectors
-            new()
-            {
-                Id = Guid.Parse("a0000001-0000-0000-0000-000000000002"),
-                Name = "Primăria Sectorului 1 București",
-                Email = "primarie@primarias1.ro",
-                County = "București",
-                City = "București",
-                District = "Sector 1",
-                IsActive = true,
-                CreatedAt = createdAt
-            },
-            new()
-            {
-                Id = Guid.Parse("a0000001-0000-0000-0000-000000000003"),
-                Name = "Primăria Sectorului 2 București",
-                Email = "primarie@ps2.ro",
-                County = "București",
-                City = "București",
-                District = "Sector 2",
-                IsActive = true,
-                CreatedAt = createdAt
-            },
-            new()
-            {
-                Id = Guid.Parse("a0000001-0000-0000-0000-000000000004"),
-                Name = "Primăria Sectorului 3 București",
-                Email = "primarie@primarie3.ro",
-                County = "București",
-                City = "București",
-                District = "Sector 3",
-                IsActive = true,
-                CreatedAt = createdAt
-            },
-            new()
-            {
-                Id = Guid.Parse("a0000001-0000-0000-0000-000000000005"),
-                Name = "Primăria Sectorului 4 București",
-                Email = "primarie@ps4.ro",
-                County = "București",
-                City = "București",
-                District = "Sector 4",
-                IsActive = true,
-                CreatedAt = createdAt
-            },
-            new()
-            {
-                Id = Guid.Parse("a0000001-0000-0000-0000-000000000006"),
-                Name = "Primăria Sectorului 5 București",
-                Email = "primarie@sector5.ro",
-                County = "București",
-                City = "București",
-                District = "Sector 5",
-                IsActive = true,
-                CreatedAt = createdAt
-            },
-            new()
-            {
-                Id = Guid.Parse("a0000001-0000-0000-0000-000000000007"),
-                Name = "Primăria Sectorului 6 București",
-                Email = "primarie@primarie6.ro",
-                County = "București",
-                City = "București",
-                District = "Sector 6",
-                IsActive = true,
-                CreatedAt = createdAt
-            },
-            // Major Romanian Cities
-            new()
-            {
-                Id = Guid.Parse("a0000002-0000-0000-0000-000000000001"),
-                Name = "Primăria Municipiului Cluj-Napoca",
-                Email = "primarie@primariaclujnapoca.ro",
-                County = "Cluj",
-                City = "Cluj-Napoca",
-                District = null,
-                IsActive = true,
-                CreatedAt = createdAt
-            },
-            new()
-            {
-                Id = Guid.Parse("a0000002-0000-0000-0000-000000000002"),
-                Name = "Primăria Municipiului Timișoara",
-                Email = "primarie@primariatm.ro",
-                County = "Timiș",
-                City = "Timișoara",
-                District = null,
-                IsActive = true,
-                CreatedAt = createdAt
-            },
-            new()
-            {
-                Id = Guid.Parse("a0000002-0000-0000-0000-000000000003"),
-                Name = "Primăria Municipiului Iași",
-                Email = "primarie@primaria-iasi.ro",
-                County = "Iași",
-                City = "Iași",
-                District = null,
-                IsActive = true,
-                CreatedAt = createdAt
-            },
-            new()
-            {
-                Id = Guid.Parse("a0000002-0000-0000-0000-000000000004"),
-                Name = "Primăria Municipiului Constanța",
-                Email = "primarie@primaria-constanta.ro",
-                County = "Constanța",
-                City = "Constanța",
-                District = null,
-                IsActive = true,
-                CreatedAt = createdAt
-            },
-            new()
-            {
-                Id = Guid.Parse("a0000002-0000-0000-0000-000000000005"),
-                Name = "Primăria Municipiului Brașov",
-                Email = "primarie@brasovcity.ro",
-                County = "Brașov",
-                City = "Brașov",
-                District = null,
-                IsActive = true,
-                CreatedAt = createdAt
-            }
-        };
-
-        context.Authorities.AddRange(authorities);
-        await context.SaveChangesAsync(cancellationToken);
-        _logger.LogInformation("Seeded {Count} authorities", authorities.Count);
-    }
 
     private async Task SeedBadgesAsync(CivicaDbContext context, CancellationToken cancellationToken)
     {
