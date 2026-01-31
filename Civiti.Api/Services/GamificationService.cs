@@ -286,15 +286,11 @@ public class GamificationService(
                         userId, userAchievement.Achievement.Title);
 
                     var capturedAchievementTitle = userAchievement.Achievement.Title;
-                    var capturedUserId = userId;
-                    _pendingNotifications.Add(async () =>
+                    UserProfile? achiever = await context.UserProfiles.FindAsync(userId);
+                    if (achiever != null)
                     {
-                        UserProfile? achiever = await context.UserProfiles.FindAsync(capturedUserId);
-                        if (achiever != null)
-                        {
-                            await notificationService.NotifyAchievementCompletedAsync(achiever, capturedAchievementTitle);
-                        }
-                    });
+                        _pendingNotifications.Add(() => notificationService.NotifyAchievementCompletedAsync(achiever, capturedAchievementTitle));
+                    }
                 }
             }
 
