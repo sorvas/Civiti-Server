@@ -6,7 +6,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
-        <DocumentationFile>bin\$(Configuration)\$(TargetFramework)\Civica.Api.xml</DocumentationFile>
+        <DocumentationFile>bin\$(Configuration)\$(TargetFramework)\Civiti.Api.xml</DocumentationFile>
         <NoWarn>$(NoWarn);1591</NoWarn>
         <AssemblyName>Civiti.Api</AssemblyName>
     </PropertyGroup>
