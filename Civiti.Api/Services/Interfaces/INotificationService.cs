@@ -13,8 +13,8 @@ public interface INotificationService
     Task NotifyIssueApprovedAsync(Issue issue, UserProfile author);
     Task NotifyIssueRejectedAsync(Issue issue, UserProfile author, string reason);
     Task NotifyChangesRequestedAsync(Issue issue, UserProfile author, string notes);
-    Task NotifyIssueResolvedAsync(Issue issue, UserProfile author);
-    Task NotifyIssueCancelledAsync(Guid issueId);
+    Task NotifyIssueResolvedAsync(Issue issue, UserProfile author, CancellationToken cancellationToken = default);
+    Task NotifyIssueCancelledAsync(Guid issueId, CancellationToken cancellationToken = default);
 
     // Community engagement
     Task NotifyNewCommentOnIssueAsync(Issue issue, UserProfile issueAuthor, UserProfile commenter, string commentExcerpt);

@@ -79,7 +79,7 @@ public class NotificationService(
         });
     }
 
-    public async Task NotifyIssueResolvedAsync(Issue issue, UserProfile author)
+    public async Task NotifyIssueResolvedAsync(Issue issue, UserProfile author, CancellationToken cancellationToken = default)
     {
         // Notify author
         if (author.IssueUpdatesEnabled)
@@ -95,19 +95,19 @@ public class NotificationService(
 
         // Notify voters and commenters (distinct, excluding author)
         await NotifyIssueFollowersAsync(issue.Id, issue.Title, author.Id,
-            EmailNotificationType.IssueResolved);
+            EmailNotificationType.IssueResolved, cancellationToken);
     }
 
-    public async Task NotifyIssueCancelledAsync(Guid issueId)
+    public async Task NotifyIssueCancelledAsync(Guid issueId, CancellationToken cancellationToken = default)
     {
         Issue? issue = await context.Issues
             .AsNoTracking()
-            .FirstOrDefaultAsync(i => i.Id == issueId);
+            .FirstOrDefaultAsync(i => i.Id == issueId, cancellationToken);
 
         if (issue == null) return;
 
         await NotifyIssueFollowersAsync(issueId, issue.Title, issue.UserId,
-            EmailNotificationType.IssueCancelled);
+            EmailNotificationType.IssueCancelled, cancellationToken);
     }
 
     // --- Community Engagement ---
@@ -262,7 +262,7 @@ public class NotificationService(
 
     private async Task NotifyIssueFollowersAsync(
         Guid issueId, string issueTitle, Guid excludeUserId,
-        EmailNotificationType type)
+        EmailNotificationType type, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -271,13 +271,13 @@ public class NotificationService(
                 .Where(v => v.IssueId == issueId && v.UserId != excludeUserId)
                 .Select(v => v.UserId)
                 .Distinct()
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
 
             List<Guid> commenterIds = await context.Comments
                 .Where(c => c.IssueId == issueId && c.UserId != excludeUserId && !c.IsDeleted)
                 .Select(c => c.UserId)
                 .Distinct()
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
 
             List<Guid> followerIds = voterIds.Union(commenterIds).Distinct().ToList();
 
@@ -287,7 +287,7 @@ public class NotificationService(
             List<UserProfile> followers = await context.UserProfiles
                 .AsNoTracking()
                 .Where(u => followerIds.Contains(u.Id) && u.IssueUpdatesEnabled)
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
 
             foreach (UserProfile follower in followers)
             {
