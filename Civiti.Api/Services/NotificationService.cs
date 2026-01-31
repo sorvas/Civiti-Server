@@ -244,7 +244,7 @@ public class NotificationService(
 
             if (!channelWriter.TryWrite(notification))
             {
-                logger.LogWarning("Email channel full — dropped {Type} email to {To}", type, to);
+                logger.LogError("Email channel full — dropped {Type} email to {To}. Increase Resend:ChannelCapacity if this persists.", type, to);
             }
         }
         catch (Exception ex)

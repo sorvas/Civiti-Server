@@ -17,7 +17,7 @@ public class UserProfile
     public bool MonthlyDigestEnabled { get; set; }
     public bool AchievementsEnabled { get; set; } = true;
     public int Points { get; set; }
-    public int Level { get; set; }
+    public int Level { get; set; } = 1;
     public int IssuesReported { get; set; }
     public int IssuesResolved { get; set; }
     public int CommunityVotes { get; set; }

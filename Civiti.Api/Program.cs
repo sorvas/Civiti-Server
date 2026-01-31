@@ -371,7 +371,7 @@ else
 
 // Email notification channel (bounded, drop-write if full)
 Channel<EmailNotification> emailChannel = Channel.CreateBounded<EmailNotification>(
-    new BoundedChannelOptions(1000) { FullMode = BoundedChannelFullMode.DropWrite });
+    new BoundedChannelOptions(resendConfig.ChannelCapacity) { FullMode = BoundedChannelFullMode.DropWrite });
 builder.Services.AddSingleton(emailChannel.Reader);
 builder.Services.AddSingleton(emailChannel.Writer);
 
