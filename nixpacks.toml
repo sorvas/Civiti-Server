@@ -6,7 +6,7 @@ nixPkgs = ["dotnet-sdk_9"]
 cmds = ["dotnet restore"]
 
 [phases.build]
-cmds = ["dotnet publish -c Release -o out"]
+cmds = ["dotnet publish Civiti.Api/Civiti.Api.csproj -c Release -o out"]
 
 [start]
-cmd = "dotnet out/Civica.Api.dll"
+cmd = "dotnet out/Civiti.Api.dll"
