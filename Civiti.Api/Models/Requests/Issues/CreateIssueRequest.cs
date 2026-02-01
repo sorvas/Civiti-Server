@@ -8,8 +8,6 @@ namespace Civiti.Api.Models.Requests.Issues;
 /// </summary>
 public class CreateIssueRequest
 {
-    public const int MaxPhotoCount = 8;
-
     /// <summary>
     /// Brief, descriptive title of the issue (max 200 characters)
     /// </summary>
