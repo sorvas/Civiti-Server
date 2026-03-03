@@ -64,6 +64,8 @@ public class UserProfileConfiguration : IEntityTypeConfiguration<UserProfile>
         builder.Property(u => u.IsDeleted)
             .HasDefaultValue(false);
 
+        builder.HasQueryFilter(u => !u.IsDeleted);
+
         // Indexes
         builder.HasIndex(u => u.IsDeleted);
         builder.HasIndex(u => u.District);

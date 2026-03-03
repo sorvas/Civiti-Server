@@ -45,7 +45,7 @@ public class GamificationService(
         try
         {
             UserProfile? user = await context.UserProfiles
-                .FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted);
+                .FirstOrDefaultAsync(u => u.Id == userId);
             if (user == null)
             {
                 logger.LogWarning("User not found for awarding points: {UserId}", userId);
@@ -91,7 +91,7 @@ public class GamificationService(
         try
         {
             UserProfile? user = await context.UserProfiles
-                .FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted);
+                .FirstOrDefaultAsync(u => u.Id == userId);
             if (user == null)
             {
                 logger.LogWarning("User not found for deducting points: {UserId}", userId);
@@ -133,7 +133,7 @@ public class GamificationService(
         {
             UserProfile? user = await context.UserProfiles
                 .Include(u => u.UserBadges)
-                .FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted);
+                .FirstOrDefaultAsync(u => u.Id == userId);
 
             if (user == null)
             {
@@ -289,7 +289,7 @@ public class GamificationService(
 
                     var capturedAchievementTitle = userAchievement.Achievement.Title;
                     UserProfile? achiever = await context.UserProfiles
-                        .FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted);
+                        .FirstOrDefaultAsync(u => u.Id == userId);
                     if (achiever != null)
                     {
                         _pendingNotifications.Add(() => notificationService.NotifyAchievementCompletedAsync(achiever, capturedAchievementTitle));
@@ -659,8 +659,7 @@ public class GamificationService(
     {
         try
         {
-            IQueryable<UserProfile> query = context.UserProfiles.AsNoTracking()
-                .Where(u => !u.IsDeleted);
+            IQueryable<UserProfile> query = context.UserProfiles.AsNoTracking();
 
             // Apply period filter
             if (period != "all")
