@@ -188,6 +188,7 @@ public static class UserEndpoints
         .WithDescription("Updates the authenticated user's profile information. Only provided fields will be updated; null fields are ignored. Returns the complete updated profile with gamification data.")
         .Produces<UserProfileResponse>()
         .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);
 
         // GET /api/user/gamification
@@ -292,7 +293,8 @@ public static class UserEndpoints
         .WithName("GetUserIssues")
         .WithSummary("Get issues created by the authenticated user")
         .Produces<PagedResult<IssueListResponse>>()
-        .Produces(StatusCodes.Status401Unauthorized);
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
 
         // GET /api/user/leaderboard
         group.MapGet(ApiRoutes.User.Leaderboard, async (
