@@ -257,12 +257,19 @@ public class IssueService(
                     Email = ia.Authority?.Email ?? ia.CustomEmail ?? string.Empty,
                     IsPredefined = ia.AuthorityId.HasValue
                 }).ToList(),
-                User = new UserBasicResponse
-                {
-                    Id = issue.User.Id,
-                    Name = issue.User.DisplayName,
-                    PhotoUrl = issue.User.PhotoUrl
-                }
+                User = issue.User is not null
+                    ? new UserBasicResponse
+                    {
+                        Id = issue.User.Id,
+                        Name = issue.User.DisplayName,
+                        PhotoUrl = issue.User.PhotoUrl
+                    }
+                    : new UserBasicResponse
+                    {
+                        Id = Guid.Empty,
+                        Name = "Deleted User",
+                        PhotoUrl = null
+                    }
             };
         }
         catch (Exception ex)
@@ -1132,12 +1139,19 @@ public class IssueService(
                         Email = ia.Authority?.Email ?? ia.CustomEmail ?? string.Empty,
                         IsPredefined = ia.AuthorityId.HasValue
                     }).ToList(),
-                    User = new UserBasicResponse
-                    {
-                        Id = issue.User.Id,
-                        Name = issue.User.DisplayName,
-                        PhotoUrl = issue.User.PhotoUrl
-                    }
+                    User = issue.User is not null
+                        ? new UserBasicResponse
+                        {
+                            Id = issue.User.Id,
+                            Name = issue.User.DisplayName,
+                            PhotoUrl = issue.User.PhotoUrl
+                        }
+                        : new UserBasicResponse
+                        {
+                            Id = Guid.Empty,
+                            Name = "Deleted User",
+                            PhotoUrl = null
+                        }
                 };
 
                 // Commit only after everything is ready
