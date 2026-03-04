@@ -20,27 +20,24 @@ public class UserService(
     : IUserService
 {
     // Note: UserProfile has a global query filter (HasQueryFilter) that automatically
-    // excludes IsDeleted rows. Use IgnoreQueryFilters() only in admin/maintenance paths
-    // that need to see deleted records.
+    // excludes IsDeleted rows. Mutation methods use IgnoreQueryFilters() with a single
+    // query to distinguish "user not found" from "account deleted" without a second round-trip.
     public async Task<UserGamificationResponse> GetUserGamificationAsync(string supabaseUserId)
     {
         try
         {
             UserProfile? user = await context.UserProfiles
                 .AsNoTracking()
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
             {
-                bool wasDeleted = await context.UserProfiles
-                    .IgnoreQueryFilters()
-                    .AnyAsync(u => u.SupabaseUserId == supabaseUserId && u.IsDeleted);
-                if (wasDeleted)
-                    throw new InvalidOperationException("This account has been deleted.");
-
                 logger.LogWarning("User not found for Supabase ID: {SupabaseUserId}", supabaseUserId);
                 return new UserGamificationResponse();
             }
+            if (user.IsDeleted)
+                throw new InvalidOperationException("This account has been deleted.");
 
             // Get recent badges
             List<BadgeResponse> recentBadges = await gamificationService.GetUserBadgesAsync(user.Id);
@@ -409,19 +406,16 @@ public class UserService(
         try
         {
             UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
             {
-                bool wasDeleted = await context.UserProfiles
-                    .IgnoreQueryFilters()
-                    .AnyAsync(u => u.SupabaseUserId == supabaseUserId && u.IsDeleted);
-                if (wasDeleted)
-                    throw new InvalidOperationException("This account has been deleted.");
-
                 logger.LogWarning("User not found for Supabase ID: {SupabaseUserId}", supabaseUserId);
                 throw new InvalidOperationException("User not found");
             }
+            if (user.IsDeleted)
+                throw new InvalidOperationException("This account has been deleted.");
 
             // Update only provided fields
             if (!string.IsNullOrWhiteSpace(request.DisplayName))
@@ -574,26 +568,23 @@ public class UserService(
         try
         {
             UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
             {
-                // Check if already soft-deleted — retry Supabase auth revocation if needed
-                bool alreadyDeleted = await context.UserProfiles
-                    .IgnoreQueryFilters()
-                    .AnyAsync(u => u.SupabaseUserId == supabaseUserId && u.IsDeleted);
-
-                if (alreadyDeleted)
-                {
-                    var retryResult = await supabaseService.DeleteAuthUserAsync(supabaseUserId);
-                    logger.LogInformation(
-                        "Retry Supabase auth cleanup for already-deleted user {SupabaseUserId}: {Result}",
-                        supabaseUserId, retryResult ? "succeeded" : "failed");
-                    return true; // Local deletion already complete
-                }
-
                 logger.LogWarning("User not found for deletion: {SupabaseUserId}", supabaseUserId);
                 return false;
+            }
+
+            // Already soft-deleted locally — retry Supabase auth revocation
+            if (user.IsDeleted)
+            {
+                var retryResult = await supabaseService.DeleteAuthUserAsync(supabaseUserId);
+                logger.LogInformation(
+                    "Retry Supabase auth cleanup for already-deleted user {SupabaseUserId}: {Result}",
+                    supabaseUserId, retryResult ? "succeeded" : "failed");
+                return true; // Local deletion already complete
             }
 
             // 1. Anonymize PII and soft-delete locally FIRST so the DB is always consistent.

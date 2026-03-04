@@ -606,7 +606,7 @@ public class AdminService(
             Dictionary<string, int> urgencyBreakdown = urgencyCountsRaw.ToDictionary(x => x.Urgency.ToString(), x => x.Count);
 
             // User statistics
-            var totalUsers = await context.UserProfiles.CountAsync(u => !u.IsDeleted);
+            var totalUsers = await context.UserProfiles.CountAsync();
             var activeUsersThisMonth = await context.Issues
                 .Where(i => i.CreatedAt >= monthStart)
                 .Select(i => i.UserId)

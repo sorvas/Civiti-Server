@@ -141,20 +141,15 @@ public class CommentService(
     {
         try
         {
-            // Get user profile
+            // Get user profile (single query bypassing global filter to distinguish deleted vs missing)
             UserProfile? user = await context.UserProfiles
-                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId && !u.IsDeleted);
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
-            {
-                bool wasDeleted = await context.UserProfiles
-                    .IgnoreQueryFilters()
-                    .AnyAsync(u => u.SupabaseUserId == supabaseUserId && u.IsDeleted);
-                if (wasDeleted)
-                    throw new InvalidOperationException("This account has been deleted.");
-
                 throw new InvalidOperationException("User not found");
-            }
+            if (user.IsDeleted)
+                throw new InvalidOperationException("This account has been deleted.");
 
             // Verify issue exists and is active
             Issue? issue = await context.Issues
@@ -357,18 +352,13 @@ public class CommentService(
         try
         {
             UserProfile? user = await context.UserProfiles
-                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId && !u.IsDeleted);
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
-            {
-                bool wasDeleted = await context.UserProfiles
-                    .IgnoreQueryFilters()
-                    .AnyAsync(u => u.SupabaseUserId == supabaseUserId && u.IsDeleted);
-                if (wasDeleted)
-                    return (false, "This account has been deleted.");
-
                 return (false, "User not found");
-            }
+            if (user.IsDeleted)
+                return (false, "This account has been deleted.");
 
             Comment? comment = await context.Comments
                 .FirstOrDefaultAsync(c => c.Id == commentId && !c.IsDeleted);
@@ -425,18 +415,13 @@ public class CommentService(
         {
             // Pre-validate outside the transaction
             UserProfile? user = await context.UserProfiles
-                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId && !u.IsDeleted);
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
-            {
-                bool wasDeleted = await context.UserProfiles
-                    .IgnoreQueryFilters()
-                    .AnyAsync(u => u.SupabaseUserId == supabaseUserId && u.IsDeleted);
-                if (wasDeleted)
-                    return (false, "This account has been deleted.");
-
                 return (false, "User not found");
-            }
+            if (user.IsDeleted)
+                return (false, "This account has been deleted.");
 
             // Don't include User to avoid tracking UserProfile - gamification uses FindAsync
             // which would return the tracked entity, causing double points on retry
@@ -644,18 +629,13 @@ public class CommentService(
         {
             // Pre-validate outside the transaction
             UserProfile? user = await context.UserProfiles
-                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId && !u.IsDeleted);
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
-            {
-                bool wasDeleted = await context.UserProfiles
-                    .IgnoreQueryFilters()
-                    .AnyAsync(u => u.SupabaseUserId == supabaseUserId && u.IsDeleted);
-                if (wasDeleted)
-                    return (false, "This account has been deleted.");
-
                 return (false, "User not found");
-            }
+            if (user.IsDeleted)
+                return (false, "This account has been deleted.");
 
             // Don't include User to avoid tracking UserProfile - gamification uses FindAsync
             // which would return the tracked entity, causing double points on retry
@@ -768,18 +748,13 @@ public class CommentService(
         {
             // Pre-validate outside the transaction
             UserProfile? user = await context.UserProfiles
-                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId && !u.IsDeleted);
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
-            {
-                bool wasDeleted = await context.UserProfiles
-                    .IgnoreQueryFilters()
-                    .AnyAsync(u => u.SupabaseUserId == supabaseUserId && u.IsDeleted);
-                if (wasDeleted)
-                    return (false, "This account has been deleted.");
-
                 return (false, "User not found");
-            }
+            if (user.IsDeleted)
+                return (false, "This account has been deleted.");
 
             // Don't include User to avoid tracking UserProfile - gamification uses FindAsync
             // which would return the tracked entity, causing double points on retry
