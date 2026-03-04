@@ -44,7 +44,6 @@ public class IssueService(
 
             IQueryable<Issue> query = context.Issues
                 .Include(i => i.Photos)
-                .Include(i => i.User)
                 .AsQueryable();
 
             // Apply status filter - default to Active only if not specified
