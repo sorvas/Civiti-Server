@@ -202,6 +202,13 @@ public class UserService(
             // Clear the failed entity from the change tracker and retry the get
             context.ChangeTracker.Clear();
 
+            // Distinguish concurrent soft-delete from concurrent profile creation
+            bool deletedDuringRace = await context.UserProfiles
+                .IgnoreQueryFilters()
+                .AnyAsync(u => u.SupabaseUserId == supabaseUserId && u.IsDeleted);
+            if (deletedDuringRace)
+                throw new InvalidOperationException("This account has been deleted.");
+
             logger.LogInformation(
                 "Profile creation conflict for {SupabaseUserId}, fetching existing profile (likely concurrent creation)",
                 supabaseUserId);
