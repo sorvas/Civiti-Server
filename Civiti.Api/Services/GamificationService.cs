@@ -231,32 +231,27 @@ public class GamificationService(
     {
         try
         {
-            // Guard: skip for missing or soft-deleted users.
-            // Use a scalar projection instead of loading the full UserProfile row,
-            // since this method is called 3-4 times per user action and only needs the IsDeleted flag.
-            var deletionStatus = await context.UserProfiles
+            // Guard + data load in a single query (mirrors CheckAndAwardBadgesAsync pattern).
+            // This method runs 3-4 times per user action, so one round-trip matters.
+            UserProfile? user = await context.UserProfiles
                 .IgnoreQueryFilters()
-                .Where(u => u.Id == userId)
-                .Select(u => new { u.IsDeleted })
-                .FirstOrDefaultAsync();
+                .Include(u => u.UserAchievements.Where(ua => !ua.Completed))
+                    .ThenInclude(ua => ua.Achievement)
+                .FirstOrDefaultAsync(u => u.Id == userId);
 
-            if (deletionStatus == null)
+            if (user == null)
             {
                 logger.LogWarning("User not found for achievement check: {UserId}", userId);
                 return;
             }
 
-            if (deletionStatus.IsDeleted)
+            if (user.IsDeleted)
             {
                 logger.LogDebug("Skipping achievement check for soft-deleted user: {UserId}", userId);
                 return;
             }
 
-            // Get achievements from database
-            List<UserAchievement> userAchievements = await context.UserAchievements
-                .Include(ua => ua.Achievement)
-                .Where(ua => ua.UserId == userId && !ua.Completed)
-                .ToListAsync();
+            List<UserAchievement> userAchievements = user.UserAchievements;
 
             // Also check change tracker for newly added achievements not yet saved
             HashSet<Guid> achievementIdsInDb = userAchievements.Select(ua => ua.AchievementId).ToHashSet();

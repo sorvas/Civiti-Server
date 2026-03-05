@@ -8,6 +8,7 @@ public class DeleteAccountRequestValidator : AbstractValidator<DeleteAccountRequ
     public DeleteAccountRequestValidator()
     {
         RuleFor(x => x.Confirmation)
+            .Cascade(CascadeMode.Stop)
             .NotEmpty()
             .WithMessage("Field 'confirmation' is required.")
             .Equal("DELETE")

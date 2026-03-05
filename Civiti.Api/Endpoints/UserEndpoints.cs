@@ -314,9 +314,11 @@ public static class UserEndpoints
         })
         .WithName("GetUserIssues")
         .WithSummary("Get issues created by the authenticated user")
+        .WithDescription("Returns a paginated list of issues created by the authenticated user. Returns 404 if the user's profile does not exist (e.g., token is valid but no Civiti profile was created). Returns 403 if the account has been soft-deleted.")
         .Produces<PagedResult<IssueListResponse>>()
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound);
 
         // GET /api/user/leaderboard
         group.MapGet(ApiRoutes.User.Leaderboard, async (
