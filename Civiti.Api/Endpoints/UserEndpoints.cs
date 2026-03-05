@@ -238,9 +238,26 @@ public static class UserEndpoints
                 return Results.BadRequest(new { error = "Confirmation must be exactly \"DELETE\" to proceed." });
             }
 
-            var deleted = await userService.DeleteUserAsync(supabaseUserId);
+            try
+            {
+                var deleted = await userService.DeleteUserAsync(supabaseUserId);
 
-            return !deleted ? Results.NotFound(new { error = "User not found" }) : Results.NoContent();
+                return !deleted ? Results.NotFound(new { error = "User not found" }) : Results.NoContent();
+            }
+            catch (InvalidOperationException ex) when (ex.Message == "This account has been deleted.")
+            {
+                return Results.Problem(
+                    detail: "This account has been deleted.",
+                    statusCode: StatusCodes.Status403Forbidden,
+                    title: "Account Deleted");
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Problem(
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: "Delete Failed");
+            }
         })
         .WithName("DeleteUserAccount")
         .WithSummary("Delete user account (soft delete)")
@@ -248,7 +265,9 @@ public static class UserEndpoints
         .Produces(StatusCodes.Status204NoContent)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status404NotFound);
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status500InternalServerError);
 
         // GET /api/user/issues
         group.MapGet(ApiRoutes.User.MyIssues, async (

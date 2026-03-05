@@ -546,13 +546,14 @@ public class IssueServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetUserIssues_Should_Return_Empty_For_Unknown_User()
+    public async Task GetUserIssues_Should_Throw_For_Unknown_User()
     {
         var svc = CreateService();
-        var result = await svc.GetUserIssuesAsync("nonexistent",
+
+        var act = () => svc.GetUserIssuesAsync("nonexistent",
             new GetUserIssuesRequest { Page = 1, PageSize = 10 });
 
-        result.Items.Should().BeEmpty();
-        result.TotalItems.Should().Be(0);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("User profile not found.");
     }
 }
