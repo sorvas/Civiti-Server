@@ -1,4 +1,5 @@
 using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Models.Domain;
 using Civiti.Api.Models.Requests.Auth;
 using Civiti.Api.Services;
@@ -145,8 +146,7 @@ public class UserServiceTests : IDisposable
             "deleted_update_user",
             new UpdateUserProfileRequest { DisplayName = "X" });
 
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage(DomainErrors.AccountDeleted);
+        await act.Should().ThrowAsync<AccountDeletedException>();
     }
 
     // ── DeleteUserAsync ──
@@ -319,8 +319,7 @@ public class UserServiceTests : IDisposable
         var svc = CreateService();
         var act = () => svc.GetUserProfileAsync("deleted_profile_user");
 
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage(DomainErrors.AccountDeleted);
+        await act.Should().ThrowAsync<AccountDeletedException>();
     }
 
     // ── GetOrCreateUserProfileAsync ──
@@ -368,8 +367,7 @@ public class UserServiceTests : IDisposable
         var svc = CreateService();
         var act = () => svc.GetOrCreateUserProfileAsync("deleted_user", "x@test.com", "New Name", null);
 
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage(DomainErrors.AccountDeleted);
+        await act.Should().ThrowAsync<AccountDeletedException>();
     }
 
     [Fact]
@@ -390,8 +388,7 @@ public class UserServiceTests : IDisposable
             "deleted_user_create",
             "reborn@test.com");
 
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage(DomainErrors.AccountDeleted);
+        await act.Should().ThrowAsync<AccountDeletedException>();
     }
 
     // Note: GetLeaderboardAsync cannot be tested with SQLite due to SQL APPLY limitation

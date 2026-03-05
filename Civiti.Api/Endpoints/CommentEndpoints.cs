@@ -1,4 +1,5 @@
 using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Infrastructure.Extensions;
 using Civiti.Api.Models.Requests.Comments;
 using Civiti.Api.Models.Responses.Auth;
@@ -82,6 +83,13 @@ public static class CommentEndpoints
                 CommentResponse comment = await commentService.CreateCommentAsync(issueId, request, supabaseUserId);
                 return Results.Created($"/api/comments/{comment.Id}", comment);
             }
+            catch (AccountDeletedException)
+            {
+                return Results.Problem(
+                    detail: DomainErrors.AccountDeleted,
+                    statusCode: StatusCodes.Status403Forbidden,
+                    title: "Account Deleted");
+            }
             catch (InvalidOperationException ex)
             {
                 return ex.Message switch
@@ -89,10 +97,6 @@ public static class CommentEndpoints
                     DomainErrors.IssueNotFound or DomainErrors.ParentCommentNotFound => Results.NotFound(new { error = ex.Message }),
                     DomainErrors.CommentRateLimited => Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status429TooManyRequests),
                     DomainErrors.DuplicateComment => Results.Conflict(new { error = ex.Message }),
-                    DomainErrors.AccountDeleted => Results.Problem(
-                        detail: DomainErrors.AccountDeleted,
-                        statusCode: StatusCodes.Status403Forbidden,
-                        title: "Account Deleted"),
                     _ => Results.BadRequest(new { error = ex.Message })
                 };
             }

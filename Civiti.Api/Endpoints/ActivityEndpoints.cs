@@ -1,4 +1,5 @@
 using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Infrastructure.Extensions;
 using Civiti.Api.Models.Domain;
 using Civiti.Api.Models.Requests.Activity;
@@ -82,7 +83,7 @@ public static class ActivityEndpoints
                 PagedResult<ActivityResponse> result = await activityService.GetUserActivitiesAsync(profile.Id, request);
                 return Results.Ok(result);
             }
-            catch (InvalidOperationException ex) when (ex.Message == DomainErrors.AccountDeleted)
+            catch (AccountDeletedException)
             {
                 return Results.Problem(
                     detail: DomainErrors.AccountDeleted,

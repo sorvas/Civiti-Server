@@ -1,6 +1,7 @@
 using System.Data;
 using Civiti.Api.Data;
 using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Models.Domain;
 using Civiti.Api.Models.Requests.Comments;
 using Civiti.Api.Models.Responses.Comments;
@@ -150,7 +151,7 @@ public class CommentService(
             if (user == null)
                 throw new InvalidOperationException(DomainErrors.UserNotFound);
             if (user.IsDeleted)
-                throw new InvalidOperationException(DomainErrors.AccountDeleted);
+                throw new AccountDeletedException();
 
             // Verify issue exists and is active
             Issue? issue = await context.Issues

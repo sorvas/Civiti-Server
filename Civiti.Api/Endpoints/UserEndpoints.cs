@@ -1,4 +1,5 @@
 using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Infrastructure.Extensions;
 using Civiti.Api.Infrastructure.Filters;
 using Civiti.Api.Models.Domain;
@@ -58,7 +59,7 @@ public static class UserEndpoints
                     supabaseUserId, email, displayName, photoUrl, signupMetadata);
                 return Results.Ok(profile);
             }
-            catch (InvalidOperationException ex) when (ex.Message == DomainErrors.AccountDeleted)
+            catch (AccountDeletedException)
             {
                 return Results.Problem(
                     detail: DomainErrors.AccountDeleted,
@@ -127,7 +128,7 @@ public static class UserEndpoints
                 }
                 throw; // Re-throw if profile still doesn't exist (genuine DB error)
             }
-            catch (InvalidOperationException ex) when (ex.Message == DomainErrors.AccountDeleted)
+            catch (AccountDeletedException)
             {
                 return Results.Problem(
                     detail: DomainErrors.AccountDeleted,
@@ -171,7 +172,7 @@ public static class UserEndpoints
                 UserProfileResponse updatedProfile = await userService.UpdateUserProfileAsync(supabaseUserId, request);
                 return Results.Ok(updatedProfile);
             }
-            catch (InvalidOperationException ex) when (ex.Message == DomainErrors.AccountDeleted)
+            catch (AccountDeletedException)
             {
                 return Results.Problem(
                     detail: DomainErrors.AccountDeleted,
@@ -207,7 +208,7 @@ public static class UserEndpoints
                 UserGamificationResponse gamification = await userService.GetUserGamificationAsync(supabaseUserId);
                 return Results.Ok(gamification);
             }
-            catch (InvalidOperationException ex) when (ex.Message == DomainErrors.AccountDeleted)
+            catch (AccountDeletedException)
             {
                 return Results.Problem(
                     detail: DomainErrors.AccountDeleted,
@@ -297,7 +298,7 @@ public static class UserEndpoints
                 PagedResult<IssueListResponse> issues = await issueService.GetUserIssuesAsync(supabaseUserId, request);
                 return Results.Ok(issues);
             }
-            catch (InvalidOperationException ex) when (ex.Message == DomainErrors.AccountDeleted)
+            catch (AccountDeletedException)
             {
                 return Results.Problem(
                     detail: DomainErrors.AccountDeleted,

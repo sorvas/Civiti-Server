@@ -1,4 +1,5 @@
 using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Infrastructure.Extensions;
 using Civiti.Api.Models.Responses.Auth;
 using Civiti.Api.Models.Responses.Gamification;
@@ -55,7 +56,7 @@ public static class GamificationEndpoints
                 List<BadgeResponse> badges = await gamificationService.GetAvailableBadgesAsync(profile.Id);
                 return Results.Ok(badges);
             }
-            catch (InvalidOperationException ex) when (ex.Message == DomainErrors.AccountDeleted)
+            catch (AccountDeletedException)
             {
                 return Results.Problem(
                     detail: DomainErrors.AccountDeleted,
@@ -105,7 +106,7 @@ public static class GamificationEndpoints
                 List<AchievementProgressResponse> achievements = await gamificationService.GetUserAchievementsAsync(profile.Id);
                 return Results.Ok(achievements);
             }
-            catch (InvalidOperationException ex) when (ex.Message == DomainErrors.AccountDeleted)
+            catch (AccountDeletedException)
             {
                 return Results.Problem(
                     detail: DomainErrors.AccountDeleted,

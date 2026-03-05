@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Civiti.Api.Data;
 using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Models.Domain;
 using Civiti.Api.Models.Requests.Issues;
 using Civiti.Api.Models.Responses.Authority;
@@ -300,7 +301,7 @@ public class IssueService(
             if (userProfile == null)
                 throw new InvalidOperationException(DomainErrors.UserProfileNotFound);
             if (userProfile.IsDeleted)
-                throw new InvalidOperationException(DomainErrors.AccountDeleted);
+                throw new AccountDeletedException();
 
             // Create the issue
             Issue issue = new()
@@ -616,7 +617,7 @@ public class IssueService(
 
             if (userProfile.IsDeleted)
             {
-                throw new InvalidOperationException(DomainErrors.AccountDeleted);
+                throw new AccountDeletedException();
             }
 
             IQueryable<Issue> query = context.Issues
@@ -750,6 +751,9 @@ public class IssueService(
                         ? userProfile
                         : await context.UserProfiles.FirstOrDefaultAsync(u => u.Id == issue.UserId);
 
+                    // Owner may be null if their account was soft-deleted (filtered out by
+                    // the global query filter). Skip the stat update — the deleted user's
+                    // profile is anonymised and no longer participates in gamification.
                     if (issueOwner != null)
                     {
                         issueOwner.IssuesResolved++;
@@ -810,6 +814,7 @@ public class IssueService(
                         UserProfile? issueOwner = issue.UserId == userProfile.Id
                             ? userProfile
                             : await context.UserProfiles.AsNoTracking().FirstOrDefaultAsync(u => u.Id == issue.UserId);
+                        // Skip notification if owner was soft-deleted (filtered by global query filter)
                         if (issueOwner != null)
                         {
                             await notificationService.NotifyIssueResolvedAsync(issue, issueOwner);

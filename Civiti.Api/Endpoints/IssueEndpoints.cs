@@ -1,4 +1,5 @@
 using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Infrastructure.Extensions;
 using Civiti.Api.Infrastructure.Filters;
 using Civiti.Api.Models.Domain;
@@ -151,7 +152,7 @@ public static class IssueEndpoints
                 CreateIssueResponse result = await issueService.CreateIssueAsync(request, supabaseUserId);
                 return TypedResults.Created($"/api/issues/{result.Id}", result);
             }
-            catch (InvalidOperationException ex) when (ex.Message == DomainErrors.AccountDeleted)
+            catch (AccountDeletedException)
             {
                 return TypedResults.Problem(
                     detail: DomainErrors.AccountDeleted,

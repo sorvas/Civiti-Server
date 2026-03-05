@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Civiti.Api.Data;
 using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Infrastructure.Extensions;
 using Civiti.Api.Models.Domain;
 using Civiti.Api.Models.Requests.Auth;
@@ -39,7 +40,7 @@ public class UserService(
                 return new UserGamificationResponse();
             }
             if (user.IsDeleted)
-                throw new InvalidOperationException(DomainErrors.AccountDeleted);
+                throw new AccountDeletedException();
 
             return await BuildGamificationResponseAsync(user);
         }
@@ -98,7 +99,7 @@ public class UserService(
                 return null;
             }
             if (user.IsDeleted)
-                throw new InvalidOperationException(DomainErrors.AccountDeleted);
+                throw new AccountDeletedException();
 
             // Track login streak (once per day) and get updated user data in a single operation
             user = await UpdateLoginStreakAsync(user.Id) ?? user;
@@ -159,7 +160,7 @@ public class UserService(
         if (wasDeleted)
         {
             logger.LogWarning("Blocked profile re-creation for deleted user {SupabaseUserId}", supabaseUserId);
-            throw new InvalidOperationException(DomainErrors.AccountDeleted);
+            throw new AccountDeletedException();
         }
 
         // Profile doesn't exist - attempt to create it
@@ -209,7 +210,7 @@ public class UserService(
                 .IgnoreQueryFilters()
                 .AnyAsync(u => u.SupabaseUserId == supabaseUserId && u.IsDeleted);
             if (deletedDuringRace)
-                throw new InvalidOperationException(DomainErrors.AccountDeleted);
+                throw new AccountDeletedException();
 
             logger.LogInformation(
                 "Profile creation conflict for {SupabaseUserId}, fetching existing profile (likely concurrent creation)",
@@ -259,7 +260,7 @@ public class UserService(
                     return null;
                 }
                 if (user.IsDeleted)
-                    throw new InvalidOperationException(DomainErrors.AccountDeleted);
+                    throw new AccountDeletedException();
 
                 DateTime today = DateTime.UtcNow.Date;
                 DateTime lastActivityDate = user.LastActivityDate.Date;
@@ -340,7 +341,7 @@ public class UserService(
             if (existingUser is { IsDeleted: true })
             {
                 logger.LogWarning("Blocked profile re-creation for deleted user {SupabaseUserId}", supabaseUserId);
-                throw new InvalidOperationException(DomainErrors.AccountDeleted);
+                throw new AccountDeletedException();
             }
 
             if (existingUser != null)
@@ -418,7 +419,7 @@ public class UserService(
                 throw new InvalidOperationException(DomainErrors.UserNotFound);
             }
             if (user.IsDeleted)
-                throw new InvalidOperationException(DomainErrors.AccountDeleted);
+                throw new AccountDeletedException();
 
             // Update only provided fields
             if (!string.IsNullOrWhiteSpace(request.DisplayName))
@@ -576,13 +577,14 @@ public class UserService(
                 return false;
             }
 
-            // Already soft-deleted locally — retry Supabase auth revocation
+            // Already soft-deleted locally — retry Supabase auth revocation in case
+            // the previous attempt failed after the local soft-delete committed.
             if (user.IsDeleted)
             {
                 var retryResult = await supabaseService.DeleteAuthUserAsync(supabaseUserId);
                 logger.LogInformation(
-                    "Retry Supabase auth cleanup for already-deleted user {SupabaseUserId}: {Result}",
-                    supabaseUserId, retryResult ? "succeeded" : "failed");
+                    "Retried Supabase auth cleanup for previously-deleted user {SupabaseUserId}: auth {AuthResult}",
+                    supabaseUserId, retryResult ? "revoked" : "still pending");
                 return true; // Local deletion already complete
             }
 

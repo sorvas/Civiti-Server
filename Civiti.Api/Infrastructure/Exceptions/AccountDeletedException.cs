@@ -1,0 +1,10 @@
+using Civiti.Api.Infrastructure.Constants;
+
+namespace Civiti.Api.Infrastructure.Exceptions;
+
+/// <summary>
+/// Thrown when an operation is attempted against a soft-deleted user account.
+/// Endpoints catch this to return 403 Forbidden with a consistent error payload.
+/// </summary>
+public sealed class AccountDeletedException()
+    : InvalidOperationException(DomainErrors.AccountDeleted);
