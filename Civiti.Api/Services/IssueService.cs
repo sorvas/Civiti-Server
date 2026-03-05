@@ -727,7 +727,7 @@ public class IssueService(
                 // Check ownership (admins can bypass)
                 if (!isAdmin && issue.UserId != userProfile.Id)
                 {
-                    return (false, "You can only change status of your own issues");
+                    return (false, DomainErrors.ChangeOwnIssueStatusOnly);
                 }
 
                 // Validate the requested status transition
@@ -910,7 +910,7 @@ public class IssueService(
                 // Check ownership
                 if (issue.UserId != userProfile.Id)
                 {
-                    return (false, null, "You can only edit your own issues");
+                    return (false, null, DomainErrors.EditOwnIssuesOnly);
                 }
 
                 // Check if the issue can be edited (not Cancelled or Resolved)

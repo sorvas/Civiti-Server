@@ -86,9 +86,9 @@ public static class CommentEndpoints
             {
                 return ex.Message switch
                 {
-                    DomainErrors.IssueNotFound or "Parent comment not found" => Results.NotFound(new { error = ex.Message }),
-                    "Please wait before posting another comment" => Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status429TooManyRequests),
-                    "You have already posted this comment" => Results.Conflict(new { error = ex.Message }),
+                    DomainErrors.IssueNotFound or DomainErrors.ParentCommentNotFound => Results.NotFound(new { error = ex.Message }),
+                    DomainErrors.CommentRateLimited => Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status429TooManyRequests),
+                    DomainErrors.DuplicateComment => Results.Conflict(new { error = ex.Message }),
                     DomainErrors.AccountDeleted => Results.Problem(
                         detail: DomainErrors.AccountDeleted,
                         statusCode: StatusCodes.Status403Forbidden,
@@ -127,7 +127,7 @@ public static class CommentEndpoints
             CommentResponse? comment = await commentService.GetCommentByIdAsync(id, currentUserId);
             if (comment == null)
             {
-                return Results.NotFound(new { error = "Comment not found" });
+                return Results.NotFound(new { error = DomainErrors.CommentNotFound });
             }
 
             return Results.Ok(comment);
@@ -156,8 +156,8 @@ public static class CommentEndpoints
             {
                 return error switch
                 {
-                    "Comment not found" => Results.NotFound(new { error }),
-                    "You can only edit your own comments" => Results.Forbid(),
+                    DomainErrors.CommentNotFound => Results.NotFound(new { error }),
+                    DomainErrors.EditOwnCommentsOnly => Results.Forbid(),
                     DomainErrors.AccountDeleted => Results.Problem(
                         detail: DomainErrors.AccountDeleted,
                         statusCode: StatusCodes.Status403Forbidden,
@@ -197,8 +197,8 @@ public static class CommentEndpoints
             {
                 return error switch
                 {
-                    "Comment not found" => Results.NotFound(new { error }),
-                    "You can only delete your own comments" => Results.Forbid(),
+                    DomainErrors.CommentNotFound => Results.NotFound(new { error }),
+                    DomainErrors.DeleteOwnCommentsOnly => Results.Forbid(),
                     DomainErrors.AccountDeleted => Results.Problem(
                         detail: DomainErrors.AccountDeleted,
                         statusCode: StatusCodes.Status403Forbidden,
@@ -235,7 +235,7 @@ public static class CommentEndpoints
             {
                 return error switch
                 {
-                    "Comment not found" => Results.NotFound(new { error }),
+                    DomainErrors.CommentNotFound => Results.NotFound(new { error }),
                     DomainErrors.AccountDeleted => Results.Problem(
                         detail: DomainErrors.AccountDeleted,
                         statusCode: StatusCodes.Status403Forbidden,
@@ -272,7 +272,7 @@ public static class CommentEndpoints
             {
                 return error switch
                 {
-                    "Comment not found" => Results.NotFound(new { error }),
+                    DomainErrors.CommentNotFound => Results.NotFound(new { error }),
                     DomainErrors.AccountDeleted => Results.Problem(
                         detail: DomainErrors.AccountDeleted,
                         statusCode: StatusCodes.Status403Forbidden,

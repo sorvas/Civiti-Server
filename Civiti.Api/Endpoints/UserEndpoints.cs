@@ -365,7 +365,7 @@ public static class UserEndpoints
                         title: "Account Deleted"),
                     DomainErrors.IssueNotFound => Results.NotFound(new { error }),
                     DomainErrors.UserProfileNotFound => Results.NotFound(new { error }),
-                    "You can only change status of your own issues" => Results.Forbid(),
+                    DomainErrors.ChangeOwnIssueStatusOnly => Results.Forbid(),
                     _ => Results.BadRequest(new { error })
                 };
             }
@@ -406,7 +406,7 @@ public static class UserEndpoints
                         title: "Account Deleted"),
                     DomainErrors.IssueNotFound => Results.NotFound(new { error }),
                     DomainErrors.UserProfileNotFound => Results.NotFound(new { error }),
-                    "You can only edit your own issues" => Results.Forbid(),
+                    DomainErrors.EditOwnIssuesOnly => Results.Forbid(),
                     _ => Results.BadRequest(new { error })
                 };
             }

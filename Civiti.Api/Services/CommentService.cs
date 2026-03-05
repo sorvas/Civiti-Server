@@ -174,7 +174,7 @@ public class CommentService(
 
                 if (parentComment == null)
                 {
-                    throw new InvalidOperationException("Parent comment not found");
+                    throw new InvalidOperationException(DomainErrors.ParentCommentNotFound);
                 }
 
                 if (parentComment.IssueId != issueId)
@@ -237,7 +237,7 @@ public class CommentService(
 
                 if (recentComment)
                 {
-                    throw new InvalidOperationException("Please wait before posting another comment");
+                    throw new InvalidOperationException(DomainErrors.CommentRateLimited);
                 }
 
                 // Duplicate detection: block identical content within 5 minutes
@@ -251,7 +251,7 @@ public class CommentService(
 
                 if (duplicateExists)
                 {
-                    throw new InvalidOperationException("You have already posted this comment");
+                    throw new InvalidOperationException(DomainErrors.DuplicateComment);
                 }
 
                 // Create comment
@@ -367,12 +367,12 @@ public class CommentService(
 
             if (comment == null)
             {
-                return (false, "Comment not found");
+                return (false, DomainErrors.CommentNotFound);
             }
 
             if (comment.UserId != user.Id)
             {
-                return (false, "You can only edit your own comments");
+                return (false, DomainErrors.EditOwnCommentsOnly);
             }
 
             // Validate content after trimming (handle null from explicit JSON null)
@@ -432,13 +432,13 @@ public class CommentService(
 
             if (comment == null)
             {
-                return (false, "Comment not found");
+                return (false, DomainErrors.CommentNotFound);
             }
 
             // Check authorization: owner or admin
             if (comment.UserId != user.Id && !isAdmin)
             {
-                return (false, "You can only delete your own comments");
+                return (false, DomainErrors.DeleteOwnCommentsOnly);
             }
 
             // Use execution strategy to wrap the transaction
@@ -648,7 +648,7 @@ public class CommentService(
 
             if (comment == null)
             {
-                return (false, "Comment not found");
+                return (false, DomainErrors.CommentNotFound);
             }
 
             // Cannot vote on own comment
@@ -768,7 +768,7 @@ public class CommentService(
 
             if (comment == null)
             {
-                return (false, "Comment not found");
+                return (false, DomainErrors.CommentNotFound);
             }
 
             // Check if vote exists (for user-friendly error message)

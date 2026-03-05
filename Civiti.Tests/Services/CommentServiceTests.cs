@@ -198,7 +198,7 @@ public class CommentServiceTests : IDisposable
             new CreateCommentRequest { Content = "Reply", ParentCommentId = Guid.NewGuid() },
             user.SupabaseUserId);
 
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("Parent comment not found");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage(DomainErrors.ParentCommentNotFound);
     }
 
     [Fact]
@@ -388,7 +388,7 @@ public class CommentServiceTests : IDisposable
         var (success, error) = await svc.VoteHelpfulAsync(Guid.NewGuid(), user.SupabaseUserId);
 
         success.Should().BeFalse();
-        error.Should().Be("Comment not found");
+        error.Should().Be(DomainErrors.CommentNotFound);
     }
 
     [Fact]
@@ -411,7 +411,7 @@ public class CommentServiceTests : IDisposable
         var (success, error) = await svc.VoteHelpfulAsync(comment.Id, voter.SupabaseUserId);
 
         success.Should().BeFalse();
-        error.Should().Be("Comment not found");
+        error.Should().Be(DomainErrors.CommentNotFound);
     }
 
     // ── RemoveVoteAsync ──
