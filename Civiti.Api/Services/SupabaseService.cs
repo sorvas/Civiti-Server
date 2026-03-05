@@ -151,7 +151,7 @@ public class SupabaseService(ILogger<SupabaseService> logger, SupabaseConfigurat
             using HttpClient httpClient = httpClientFactory.CreateClient();
             httpClient.Timeout = TimeSpan.FromSeconds(5);
 
-            HttpResponseMessage response = await httpClient.GetAsync($"{supabaseConfig.Url}/auth/v1/health");
+            using HttpResponseMessage response = await httpClient.GetAsync($"{supabaseConfig.Url}/auth/v1/health");
 
             return response.IsSuccessStatusCode;
         }
@@ -180,7 +180,7 @@ public class SupabaseService(ILogger<SupabaseService> logger, SupabaseConfigurat
             request.Headers.Add("Authorization", $"Bearer {supabaseConfig.ServiceRoleKey}");
             request.Headers.Add("apikey", supabaseConfig.ServiceRoleKey);
 
-            HttpResponseMessage response = await httpClient.SendAsync(request);
+            using HttpResponseMessage response = await httpClient.SendAsync(request);
 
             if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {

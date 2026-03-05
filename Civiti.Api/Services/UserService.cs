@@ -608,7 +608,7 @@ public class UserService(
             var supabaseDeleted = await supabaseService.DeleteAuthUserAsync(supabaseUserId);
             if (!supabaseDeleted)
             {
-                logger.LogError(
+                logger.LogWarning(
                     "Supabase auth deletion failed for user {UserId} after local soft-delete. " +
                     "Auth record requires manual cleanup.", user.Id);
             }

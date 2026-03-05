@@ -8,7 +8,7 @@ namespace Civiti.Api.Infrastructure.Constants;
 public static class DomainErrors
 {
     public const string AccountDeleted = "This account has been deleted.";
-    public const string UserNotFound = "User not found";
+    public const string UserNotFound = "User not found.";
     public const string UserProfileNotFound = "User profile not found.";
-    public const string IssueNotFound = "Issue not found";
+    public const string IssueNotFound = "Issue not found.";
 }
