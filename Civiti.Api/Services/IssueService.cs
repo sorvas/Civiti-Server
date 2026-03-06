@@ -140,6 +140,8 @@ public class IssueService(
                             .OrderBy(p => p.CreatedAt)
                             .Select(p => p.Url)
                             .FirstOrDefault(),
+                        Latitude = i.Latitude,
+                        Longitude = i.Longitude,
                         District = i.District,
                         Status = i.Status
                     },
@@ -673,6 +675,8 @@ public class IssueService(
                         .OrderBy(p => p.CreatedAt)
                         .Select(p => p.Url)
                         .FirstOrDefault(),
+                    Latitude = i.Latitude,
+                    Longitude = i.Longitude,
                     District = i.District,
                     Status = i.Status
                 })
