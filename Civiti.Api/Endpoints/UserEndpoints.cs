@@ -11,6 +11,7 @@ using Civiti.Api.Models.Responses.Gamification;
 using Civiti.Api.Models.Responses.Issues;
 using Civiti.Api.Models.Responses.User;
 using Civiti.Api.Services.Interfaces;
+using System.Threading;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 
@@ -21,6 +22,34 @@ namespace Civiti.Api.Endpoints;
 /// </summary>
 public static class UserEndpoints
 {
+    private const int MaxDeleteAttemptsPerHour = 3;
+    private static readonly TimeSpan DeleteRateLimitWindow = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Thread-safe counter stored in IMemoryCache. Created once per key with a fixed
+    /// absolute expiration; Interlocked.Increment ensures atomic read-modify-write.
+    /// </summary>
+    private sealed class RateLimitCounter
+    {
+        private int _count;
+        public int Increment() => Interlocked.Increment(ref _count);
+    }
+
+    /// <summary>
+    /// Returns true if the rate limit has been exceeded. Atomically increments the
+    /// counter and uses GetOrCreate's lazy factory to guarantee a fixed TTL window.
+    /// </summary>
+    private static bool IsDeleteRateLimited(IMemoryCache cache, string supabaseUserId)
+    {
+        string cacheKey = $"delete-cooldown:{supabaseUserId}";
+        var counter = cache.GetOrCreate(cacheKey, entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = DeleteRateLimitWindow;
+            return new RateLimitCounter();
+        })!;
+        return counter.Increment() > MaxDeleteAttemptsPerHour;
+    }
+
     /// <summary>
     /// Maps user-related endpoints to the application
     /// </summary>
@@ -248,18 +277,10 @@ public static class UserEndpoints
                 return Results.Unauthorized();
             }
 
-            // Rate limit: max 3 attempts per hour per user to throttle abuse from stolen JWTs
-            string cacheKey = $"delete-cooldown:{supabaseUserId}";
-            int attempts = memoryCache.GetOrCreate(cacheKey, entry =>
-            {
-                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1);
-                return 0;
-            });
-            if (attempts >= 3)
+            if (IsDeleteRateLimited(memoryCache, supabaseUserId))
             {
                 return Results.StatusCode(StatusCodes.Status429TooManyRequests);
             }
-            memoryCache.Set(cacheKey, attempts + 1, TimeSpan.FromHours(1));
 
             try
             {
@@ -307,17 +328,10 @@ public static class UserEndpoints
             }
 
             // Rate limit: shares cooldown with POST endpoint
-            string cacheKey = $"delete-cooldown:{supabaseUserId}";
-            int attempts = memoryCache.GetOrCreate(cacheKey, entry =>
-            {
-                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1);
-                return 0;
-            });
-            if (attempts >= 3)
+            if (IsDeleteRateLimited(memoryCache, supabaseUserId))
             {
                 return Results.StatusCode(StatusCodes.Status429TooManyRequests);
             }
-            memoryCache.Set(cacheKey, attempts + 1, TimeSpan.FromHours(1));
 
             try
             {
