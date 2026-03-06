@@ -1,4 +1,5 @@
 using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Infrastructure.Extensions;
 using Civiti.Api.Models.Requests.Comments;
 using Civiti.Api.Models.Responses.Auth;
@@ -56,7 +57,7 @@ public static class CommentEndpoints
             }
 
             PagedResult<CommentResponse>? result = await commentService.GetIssueCommentsAsync(issueId, request, currentUserId);
-            return result == null ? Results.NotFound(new { error = "Issue not found" }) : Results.Ok(result);
+            return result == null ? Results.NotFound(new { error = DomainErrors.IssueNotFound }) : Results.Ok(result);
         })
         .WithName("GetIssueComments")
         .WithSummary("Get comments for an issue")
@@ -82,13 +83,20 @@ public static class CommentEndpoints
                 CommentResponse comment = await commentService.CreateCommentAsync(issueId, request, supabaseUserId);
                 return Results.Created($"/api/comments/{comment.Id}", comment);
             }
+            catch (AccountDeletedException)
+            {
+                return Results.Problem(
+                    detail: DomainErrors.AccountDeleted,
+                    statusCode: StatusCodes.Status403Forbidden,
+                    title: "Account Deleted");
+            }
             catch (InvalidOperationException ex)
             {
                 return ex.Message switch
                 {
-                    "Issue not found" or "Parent comment not found" => Results.NotFound(new { error = ex.Message }),
-                    "Please wait before posting another comment" => Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status429TooManyRequests),
-                    "You have already posted this comment" => Results.Conflict(new { error = ex.Message }),
+                    DomainErrors.IssueNotFound or DomainErrors.ParentCommentNotFound => Results.NotFound(new { error = ex.Message }),
+                    DomainErrors.CommentRateLimited => Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status429TooManyRequests),
+                    DomainErrors.DuplicateComment => Results.Conflict(new { error = ex.Message }),
                     _ => Results.BadRequest(new { error = ex.Message })
                 };
             }
@@ -123,7 +131,7 @@ public static class CommentEndpoints
             CommentResponse? comment = await commentService.GetCommentByIdAsync(id, currentUserId);
             if (comment == null)
             {
-                return Results.NotFound(new { error = "Comment not found" });
+                return Results.NotFound(new { error = DomainErrors.CommentNotFound });
             }
 
             return Results.Ok(comment);
@@ -152,8 +160,12 @@ public static class CommentEndpoints
             {
                 return error switch
                 {
-                    "Comment not found" => Results.NotFound(new { error }),
-                    "You can only edit your own comments" => Results.Forbid(),
+                    DomainErrors.CommentNotFound => Results.NotFound(new { error }),
+                    DomainErrors.EditOwnCommentsOnly => Results.Forbid(),
+                    DomainErrors.AccountDeleted => Results.Problem(
+                        detail: DomainErrors.AccountDeleted,
+                        statusCode: StatusCodes.Status403Forbidden,
+                        title: "Account Deleted"),
                     _ => Results.BadRequest(new { error })
                 };
             }
@@ -189,8 +201,12 @@ public static class CommentEndpoints
             {
                 return error switch
                 {
-                    "Comment not found" => Results.NotFound(new { error }),
-                    "You can only delete your own comments" => Results.Forbid(),
+                    DomainErrors.CommentNotFound => Results.NotFound(new { error }),
+                    DomainErrors.DeleteOwnCommentsOnly => Results.Forbid(),
+                    DomainErrors.AccountDeleted => Results.Problem(
+                        detail: DomainErrors.AccountDeleted,
+                        statusCode: StatusCodes.Status403Forbidden,
+                        title: "Account Deleted"),
                     _ => Results.BadRequest(new { error })
                 };
             }
@@ -221,9 +237,15 @@ public static class CommentEndpoints
             var (success, error) = await commentService.VoteHelpfulAsync(id, supabaseUserId);
             if (!success)
             {
-                return error == "Comment not found"
-                    ? Results.NotFound(new { error })
-                    : Results.BadRequest(new { error });
+                return error switch
+                {
+                    DomainErrors.CommentNotFound => Results.NotFound(new { error }),
+                    DomainErrors.AccountDeleted => Results.Problem(
+                        detail: DomainErrors.AccountDeleted,
+                        statusCode: StatusCodes.Status403Forbidden,
+                        title: "Account Deleted"),
+                    _ => Results.BadRequest(new { error })
+                };
             }
 
             return Results.Ok(new CommentVoteResponse { Message = "Vote recorded" });
@@ -252,9 +274,15 @@ public static class CommentEndpoints
             var (success, error) = await commentService.RemoveVoteAsync(id, supabaseUserId);
             if (!success)
             {
-                return error == "Comment not found"
-                    ? Results.NotFound(new { error })
-                    : Results.BadRequest(new { error });
+                return error switch
+                {
+                    DomainErrors.CommentNotFound => Results.NotFound(new { error }),
+                    DomainErrors.AccountDeleted => Results.Problem(
+                        detail: DomainErrors.AccountDeleted,
+                        statusCode: StatusCodes.Status403Forbidden,
+                        title: "Account Deleted"),
+                    _ => Results.BadRequest(new { error })
+                };
             }
 
             return Results.Ok(new CommentVoteResponse { Message = "Vote removed" });

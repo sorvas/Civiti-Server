@@ -1,4 +1,5 @@
 using Civiti.Api.Data;
+using Civiti.Api.Infrastructure.Constants;
 using Civiti.Api.Models.Domain;
 using Civiti.Api.Models.Requests.Issues;
 using Civiti.Api.Services;
@@ -379,7 +380,7 @@ public class IssueServiceTests : IDisposable
         var (success, error) = await svc.IncrementEmailCountAsync(Guid.NewGuid(), "127.0.0.1");
 
         success.Should().BeFalse();
-        error.Should().Be("Issue not found");
+        error.Should().Be(DomainErrors.IssueNotFound);
     }
 
     // ── VoteForIssueAsync ──
@@ -393,7 +394,7 @@ public class IssueServiceTests : IDisposable
         var (success, error) = await svc.VoteForIssueAsync(Guid.NewGuid(), "nonexistent");
 
         success.Should().BeFalse();
-        error.Should().Be("User not found");
+        error.Should().Be(DomainErrors.UserNotFound);
     }
 
     [Fact]
@@ -410,7 +411,7 @@ public class IssueServiceTests : IDisposable
         var (success, error) = await svc.VoteForIssueAsync(Guid.NewGuid(), user.SupabaseUserId);
 
         success.Should().BeFalse();
-        error.Should().Be("Issue not found");
+        error.Should().Be(DomainErrors.IssueNotFound);
     }
 
     [Fact]
@@ -546,13 +547,14 @@ public class IssueServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetUserIssues_Should_Return_Empty_For_Unknown_User()
+    public async Task GetUserIssues_Should_Throw_For_Unknown_User()
     {
         var svc = CreateService();
-        var result = await svc.GetUserIssuesAsync("nonexistent",
+
+        var act = () => svc.GetUserIssuesAsync("nonexistent",
             new GetUserIssuesRequest { Page = 1, PageSize = 10 });
 
-        result.Items.Should().BeEmpty();
-        result.TotalItems.Should().Be(0);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage(DomainErrors.UserProfileNotFound);
     }
 }

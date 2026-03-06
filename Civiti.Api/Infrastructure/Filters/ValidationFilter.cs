@@ -20,7 +20,10 @@ public class ValidationFilter<T> : IEndpointFilter where T : class
         T? argument = context.Arguments.OfType<T>().FirstOrDefault();
         if (argument is null)
         {
-            return await next(context);
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                { "", ["A non-empty request body is required."] }
+            });
         }
 
         ValidationResult? result = await validator.ValidateAsync(argument);

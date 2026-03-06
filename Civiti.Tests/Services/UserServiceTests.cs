@@ -1,9 +1,12 @@
+using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Models.Domain;
 using Civiti.Api.Models.Requests.Auth;
 using Civiti.Api.Services;
 using Civiti.Api.Services.Interfaces;
 using Civiti.Tests.Helpers;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -15,11 +18,12 @@ public class UserServiceTests : IDisposable
     private readonly Mock<ILogger<UserService>> _logger = new();
     private readonly Mock<IGamificationService> _gamificationService = new();
     private readonly Mock<INotificationService> _notificationService = new();
+    private readonly Mock<ISupabaseService> _supabaseService = new();
 
     private UserService CreateService()
     {
         var context = _dbFactory.CreateContext();
-        return new UserService(_logger.Object, context, _gamificationService.Object, _notificationService.Object);
+        return new UserService(_logger.Object, context, _gamificationService.Object, _notificationService.Object, _supabaseService.Object);
     }
 
     public UserServiceTests()
@@ -31,6 +35,11 @@ public class UserServiceTests : IDisposable
         _gamificationService
             .Setup(g => g.GetUserAchievementsAsync(It.IsAny<Guid>()))
             .ReturnsAsync(new List<Api.Models.Responses.Gamification.AchievementProgressResponse>());
+
+        // Default: Supabase auth deletion succeeds
+        _supabaseService
+            .Setup(s => s.DeleteAuthUserAsync(It.IsAny<string>()))
+            .ReturnsAsync(true);
     }
 
     public void Dispose() => _dbFactory.Dispose();
@@ -120,12 +129,39 @@ public class UserServiceTests : IDisposable
         await act.Should().ThrowAsync<InvalidOperationException>();
     }
 
+    [Fact]
+    public async Task UpdateUserProfile_Should_Throw_For_Deleted_User()
+    {
+        var user = TestDataBuilder.CreateUser(supabaseUserId: "deleted_update_user");
+        user.IsDeleted = true;
+        user.DeletedAt = DateTime.UtcNow.AddDays(-1);
+        using (var ctx = _dbFactory.CreateContext())
+        {
+            ctx.UserProfiles.Add(user);
+            await ctx.SaveChangesAsync();
+        }
+
+        var svc = CreateService();
+        var act = () => svc.UpdateUserProfileAsync(
+            "deleted_update_user",
+            new UpdateUserProfileRequest { DisplayName = "X" });
+
+        await act.Should().ThrowAsync<AccountDeletedException>();
+    }
+
     // ── DeleteUserAsync ──
 
     [Fact]
-    public async Task DeleteUser_Should_Anonymize_Data()
+    public async Task DeleteUser_Should_Anonymize_All_PII_And_Set_Flags()
     {
         var user = TestDataBuilder.CreateUser(supabaseUserId: "delete_me", displayName: "Real Name", email: "real@test.com");
+        user.Phone = "+40712345678";
+        user.ResidenceType = ResidenceType.Apartment;
+        user.IssueUpdatesEnabled = true;
+        user.CommunityNewsEnabled = true;
+        user.MonthlyDigestEnabled = true;
+        user.AchievementsEnabled = true;
+
         using (var ctx = _dbFactory.CreateContext())
         {
             ctx.UserProfiles.Add(user);
@@ -135,23 +171,109 @@ public class UserServiceTests : IDisposable
         var svc = CreateService();
         var result = await svc.DeleteUserAsync("delete_me");
 
-        result.Should().BeTrue();
+        result.Should().Be(DeleteUserResult.Deleted);
 
         using var verifyCtx = _dbFactory.CreateContext();
-        var deleted = await verifyCtx.UserProfiles.FindAsync(user.Id);
+        var deleted = await verifyCtx.UserProfiles
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.Id == user.Id);
+
+        // PII anonymized
         deleted!.DisplayName.Should().Be("Deleted User");
-        deleted.Email.Should().Contain("deleted_");
+        deleted.Email.Should().StartWith("deleted_").And.EndWith("@civica.ro");
+        deleted.Email.Should().NotContain(user.Id.ToString()); // opaque hash, not reversible ID
         deleted.PhotoUrl.Should().BeNull();
+        deleted.Phone.Should().BeNull();
         deleted.County.Should().Be("Unknown");
         deleted.City.Should().Be("Unknown");
+        deleted.District.Should().Be("Unknown");
+        deleted.ResidenceType.Should().BeNull();
+        deleted.SupabaseUserId.Should().Be("delete_me"); // preserved for deleted-user lookup guard
+
+        // Deletion flags
+        deleted.IsDeleted.Should().BeTrue();
+        deleted.DeletedAt.Should().NotBeNull();
+        deleted.DeletedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
+
+        // Notification preferences disabled
+        deleted.IssueUpdatesEnabled.Should().BeFalse();
+        deleted.CommunityNewsEnabled.Should().BeFalse();
+        deleted.MonthlyDigestEnabled.Should().BeFalse();
+        deleted.AchievementsEnabled.Should().BeFalse();
     }
 
     [Fact]
-    public async Task DeleteUser_Should_Return_False_When_Not_Found()
+    public async Task DeleteUser_Should_Call_Supabase_Auth_Deletion()
+    {
+        var user = TestDataBuilder.CreateUser(supabaseUserId: "supa_delete");
+        using (var ctx = _dbFactory.CreateContext())
+        {
+            ctx.UserProfiles.Add(user);
+            await ctx.SaveChangesAsync();
+        }
+
+        var svc = CreateService();
+        await svc.DeleteUserAsync("supa_delete");
+
+        _supabaseService.Verify(
+            s => s.DeleteAuthUserAsync("supa_delete"),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteUser_Should_Succeed_Even_When_Supabase_Fails()
+    {
+        _supabaseService
+            .Setup(s => s.DeleteAuthUserAsync(It.IsAny<string>()))
+            .ReturnsAsync(false);
+
+        var user = TestDataBuilder.CreateUser(supabaseUserId: "supa_fail_delete");
+        using (var ctx = _dbFactory.CreateContext())
+        {
+            ctx.UserProfiles.Add(user);
+            await ctx.SaveChangesAsync();
+        }
+
+        var svc = CreateService();
+        var result = await svc.DeleteUserAsync("supa_fail_delete");
+
+        result.Should().Be(DeleteUserResult.Deleted);
+
+        using var verifyCtx = _dbFactory.CreateContext();
+        var deleted = await verifyCtx.UserProfiles
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.Id == user.Id);
+        deleted!.IsDeleted.Should().BeTrue();
+        deleted.DisplayName.Should().Be("Deleted User");
+    }
+
+    [Fact]
+    public async Task DeleteUser_Should_Return_NotFound_When_Not_Found()
     {
         var svc = CreateService();
         var result = await svc.DeleteUserAsync("nonexistent_user");
-        result.Should().BeFalse();
+        result.Should().Be(DeleteUserResult.NotFound);
+    }
+
+    [Fact]
+    public async Task DeleteUser_Should_Return_AlreadyDeleted_And_Retry_Supabase_When_Already_Deleted()
+    {
+        var user = TestDataBuilder.CreateUser(supabaseUserId: "already_deleted");
+        user.IsDeleted = true;
+        user.DeletedAt = DateTime.UtcNow.AddDays(-1);
+        // Already soft-deleted locally — retry path should detect via IgnoreQueryFilters
+        // and retry Supabase auth cleanup, returning true since local deletion is complete
+        using (var ctx = _dbFactory.CreateContext())
+        {
+            ctx.UserProfiles.Add(user);
+            await ctx.SaveChangesAsync();
+        }
+
+        var svc = CreateService();
+        var result = await svc.DeleteUserAsync("already_deleted");
+
+        result.Should().Be(DeleteUserResult.AlreadyDeleted);
+        _supabaseService.Verify(s => s.DeleteAuthUserAsync("already_deleted"), Times.Once);
     }
 
     // ── GetUserProfileAsync ──
@@ -181,6 +303,25 @@ public class UserServiceTests : IDisposable
         result!.DisplayName.Should().Be("Existing");
     }
 
+    [Fact]
+    public async Task GetUserProfile_Should_Throw_For_Deleted_User()
+    {
+        var user = TestDataBuilder.CreateUser(supabaseUserId: "deleted_profile_user", displayName: "Gone");
+        user.IsDeleted = true;
+        user.DeletedAt = DateTime.UtcNow;
+
+        using (var ctx = _dbFactory.CreateContext())
+        {
+            ctx.UserProfiles.Add(user);
+            await ctx.SaveChangesAsync();
+        }
+
+        var svc = CreateService();
+        var act = () => svc.GetUserProfileAsync("deleted_profile_user");
+
+        await act.Should().ThrowAsync<AccountDeletedException>();
+    }
+
     // ── GetOrCreateUserProfileAsync ──
 
     [Fact]
@@ -208,4 +349,49 @@ public class UserServiceTests : IDisposable
         result.Should().NotBeNull();
         result.Email.Should().Be("new@test.com");
     }
+
+    // ── Soft-delete re-creation guards ──
+
+    [Fact]
+    public async Task GetOrCreate_Should_Block_ReCreation_For_Deleted_User()
+    {
+        var user = TestDataBuilder.CreateUser(supabaseUserId: "deleted_user");
+        user.IsDeleted = true;
+        user.DeletedAt = DateTime.UtcNow.AddDays(-1);
+        using (var ctx = _dbFactory.CreateContext())
+        {
+            ctx.UserProfiles.Add(user);
+            await ctx.SaveChangesAsync();
+        }
+
+        var svc = CreateService();
+        var act = () => svc.GetOrCreateUserProfileAsync("deleted_user", "x@test.com", "New Name", null);
+
+        await act.Should().ThrowAsync<AccountDeletedException>();
+    }
+
+    [Fact]
+    public async Task CreateUserProfile_Should_Block_ReCreation_For_Deleted_User()
+    {
+        var user = TestDataBuilder.CreateUser(supabaseUserId: "deleted_user_create");
+        user.IsDeleted = true;
+        user.DeletedAt = DateTime.UtcNow.AddDays(-1);
+        using (var ctx = _dbFactory.CreateContext())
+        {
+            ctx.UserProfiles.Add(user);
+            await ctx.SaveChangesAsync();
+        }
+
+        var svc = CreateService();
+        var act = () => svc.CreateUserProfileAsync(
+            new CreateUserProfileRequest { DisplayName = "Reborn" },
+            "deleted_user_create",
+            "reborn@test.com");
+
+        await act.Should().ThrowAsync<AccountDeletedException>();
+    }
+
+    // Note: GetLeaderboardAsync cannot be tested with SQLite due to SQL APPLY limitation
+    // (GroupBy + Take in subquery). The !IsDeleted guard is verified by code review and
+    // integration tests against PostgreSQL.
 }

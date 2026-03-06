@@ -1,5 +1,7 @@
 using System.Data;
 using Civiti.Api.Data;
+using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Models.Domain;
 using Civiti.Api.Models.Requests.Comments;
 using Civiti.Api.Models.Responses.Comments;
@@ -141,14 +143,15 @@ public class CommentService(
     {
         try
         {
-            // Get user profile
+            // Get user profile (single query bypassing global filter to distinguish deleted vs missing)
             UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
-            {
-                throw new InvalidOperationException("User not found");
-            }
+                throw new InvalidOperationException(DomainErrors.UserNotFound);
+            if (user.IsDeleted)
+                throw new AccountDeletedException();
 
             // Verify issue exists and is active
             Issue? issue = await context.Issues
@@ -156,7 +159,7 @@ public class CommentService(
 
             if (issue == null)
             {
-                throw new InvalidOperationException("Issue not found");
+                throw new InvalidOperationException(DomainErrors.IssueNotFound);
             }
 
             if (issue.Status != IssueStatus.Active)
@@ -172,7 +175,7 @@ public class CommentService(
 
                 if (parentComment == null)
                 {
-                    throw new InvalidOperationException("Parent comment not found");
+                    throw new InvalidOperationException(DomainErrors.ParentCommentNotFound);
                 }
 
                 if (parentComment.IssueId != issueId)
@@ -235,7 +238,7 @@ public class CommentService(
 
                 if (recentComment)
                 {
-                    throw new InvalidOperationException("Please wait before posting another comment");
+                    throw new InvalidOperationException(DomainErrors.CommentRateLimited);
                 }
 
                 // Duplicate detection: block identical content within 5 minutes
@@ -249,7 +252,7 @@ public class CommentService(
 
                 if (duplicateExists)
                 {
-                    throw new InvalidOperationException("You have already posted this comment");
+                    throw new InvalidOperationException(DomainErrors.DuplicateComment);
                 }
 
                 // Create comment
@@ -268,8 +271,9 @@ public class CommentService(
                 await context.SaveChangesAsync();
 
                 // Update user stats atomically to avoid retry issues
+                // Guard against soft-deleted users since ExecuteUpdateAsync bypasses global filters
                 await context.UserProfiles
-                    .Where(u => u.Id == user.Id)
+                    .Where(u => u.Id == user.Id && !u.IsDeleted)
                     .ExecuteUpdateAsync(u => u
                         .SetProperty(x => x.CommentsGiven, x => x.CommentsGiven + 1)
                         .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
@@ -351,24 +355,25 @@ public class CommentService(
         try
         {
             UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
-            {
-                return (false, "User not found");
-            }
+                return (false, DomainErrors.UserNotFound);
+            if (user.IsDeleted)
+                return (false, DomainErrors.AccountDeleted);
 
             Comment? comment = await context.Comments
                 .FirstOrDefaultAsync(c => c.Id == commentId && !c.IsDeleted);
 
             if (comment == null)
             {
-                return (false, "Comment not found");
+                return (false, DomainErrors.CommentNotFound);
             }
 
             if (comment.UserId != user.Id)
             {
-                return (false, "You can only edit your own comments");
+                return (false, DomainErrors.EditOwnCommentsOnly);
             }
 
             // Validate content after trimming (handle null from explicit JSON null)
@@ -413,12 +418,13 @@ public class CommentService(
         {
             // Pre-validate outside the transaction
             UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
-            {
-                return (false, "User not found");
-            }
+                return (false, DomainErrors.UserNotFound);
+            if (user.IsDeleted)
+                return (false, DomainErrors.AccountDeleted);
 
             // Don't include User to avoid tracking UserProfile - gamification uses FindAsync
             // which would return the tracked entity, causing double points on retry
@@ -427,13 +433,13 @@ public class CommentService(
 
             if (comment == null)
             {
-                return (false, "Comment not found");
+                return (false, DomainErrors.CommentNotFound);
             }
 
             // Check authorization: owner or admin
             if (comment.UserId != user.Id && !isAdmin)
             {
-                return (false, "You can only delete your own comments");
+                return (false, DomainErrors.DeleteOwnCommentsOnly);
             }
 
             // Use execution strategy to wrap the transaction
@@ -479,8 +485,9 @@ public class CommentService(
                     "comment_deleted");
 
                 // Decrement the user's CommentsGiven stat
+                // Guard against soft-deleted users since ExecuteUpdateAsync bypasses global filters
                 await context.UserProfiles
-                    .Where(u => u.Id == comment.UserId)
+                    .Where(u => u.Id == comment.UserId && !u.IsDeleted)
                     .ExecuteUpdateAsync(u => u
                         .SetProperty(x => x.CommentsGiven, x => Math.Max(0, x.CommentsGiven - 1))
                         .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
@@ -494,7 +501,7 @@ public class CommentService(
                 {
                     // Deduct HelpfulComments stat from comment author
                     await context.UserProfiles
-                        .Where(u => u.Id == comment.UserId)
+                        .Where(u => u.Id == comment.UserId && !u.IsDeleted)
                         .ExecuteUpdateAsync(u => u
                             .SetProperty(x => x.HelpfulComments, x => Math.Max(0, x.HelpfulComments - currentHelpfulCount))
                             .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
@@ -552,8 +559,9 @@ public class CommentService(
                             "reply_cascade_deleted");
 
                         // Decrement the user's CommentsGiven stat
+                        // Guard against soft-deleted users since ExecuteUpdateAsync bypasses global filters
                         await context.UserProfiles
-                            .Where(u => u.Id == descendantStat.UserId)
+                            .Where(u => u.Id == descendantStat.UserId && !u.IsDeleted)
                             .ExecuteUpdateAsync(u => u
                                 .SetProperty(x => x.CommentsGiven, x => Math.Max(0, x.CommentsGiven - descendantStat.CommentCount))
                                 .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
@@ -567,7 +575,7 @@ public class CommentService(
                         {
                             // Deduct HelpfulComments stat from descendant author
                             await context.UserProfiles
-                                .Where(u => u.Id == descendantStat.UserId)
+                                .Where(u => u.Id == descendantStat.UserId && !u.IsDeleted)
                                 .ExecuteUpdateAsync(u => u
                                     .SetProperty(x => x.HelpfulComments, x => Math.Max(0, x.HelpfulComments - descendantStat.TotalHelpfulCount))
                                     .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
@@ -626,12 +634,13 @@ public class CommentService(
         {
             // Pre-validate outside the transaction
             UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
-            {
-                return (false, "User not found");
-            }
+                return (false, DomainErrors.UserNotFound);
+            if (user.IsDeleted)
+                return (false, DomainErrors.AccountDeleted);
 
             // Don't include User to avoid tracking UserProfile - gamification uses FindAsync
             // which would return the tracked entity, causing double points on retry
@@ -640,7 +649,7 @@ public class CommentService(
 
             if (comment == null)
             {
-                return (false, "Comment not found");
+                return (false, DomainErrors.CommentNotFound);
             }
 
             // Cannot vote on own comment
@@ -665,10 +674,20 @@ public class CommentService(
             // we can detect our already-created vote by this ID
             Guid voteId = Guid.NewGuid();
 
-            var votedByThisRequest = await strategy.ExecuteAsync(async () =>
+            var result = await strategy.ExecuteAsync(async () =>
             {
                 // Clear change tracker to ensure clean state on retry
                 context.ChangeTracker.Clear();
+
+                // Re-check IsDeleted inside the retry loop to close the TOCTOU window:
+                // a concurrent soft-delete between the pre-validation above and the INSERT
+                // would otherwise create an orphaned CommentVotes row.
+                bool isDeleted = await context.UserProfiles
+                    .IgnoreQueryFilters()
+                    .Where(u => u.Id == user.Id && u.IsDeleted)
+                    .AnyAsync();
+                if (isDeleted)
+                    return (voted: false, deleted: true);
 
                 // Check if this vote was already created in a previous retry attempt
                 CommentVote? existingVote = await context.CommentVotes
@@ -677,7 +696,7 @@ public class CommentService(
                 if (existingVote != null)
                 {
                     // Vote was created on a previous attempt - treat as success
-                    return true;
+                    return (voted: true, deleted: false);
                 }
 
                 await using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
@@ -701,8 +720,9 @@ public class CommentService(
                     .Where(c => c.Id == commentId)
                     .ExecuteUpdateAsync(c => c.SetProperty(x => x.HelpfulCount, x => x.HelpfulCount + 1));
 
+                // Guard against soft-deleted users since ExecuteUpdateAsync bypasses global filters
                 await context.UserProfiles
-                    .Where(u => u.Id == comment.UserId)
+                    .Where(u => u.Id == comment.UserId && !u.IsDeleted)
                     .ExecuteUpdateAsync(u => u
                         .SetProperty(x => x.HelpfulComments, x => x.HelpfulComments + 1)
                         .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
@@ -714,10 +734,13 @@ public class CommentService(
                     "helpful_vote_received");
 
                 await transaction.CommitAsync();
-                return true;
+                return (voted: true, deleted: false);
             });
 
-            if (votedByThisRequest)
+            if (result.deleted)
+                return (false, DomainErrors.AccountDeleted);
+
+            if (result.voted)
             {
                 logger.LogInformation(
                     "User {UserId} voted comment {CommentId} as helpful",
@@ -744,12 +767,13 @@ public class CommentService(
         {
             // Pre-validate outside the transaction
             UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
-            {
-                return (false, "User not found");
-            }
+                return (false, DomainErrors.UserNotFound);
+            if (user.IsDeleted)
+                return (false, DomainErrors.AccountDeleted);
 
             // Don't include User to avoid tracking UserProfile - gamification uses FindAsync
             // which would return the tracked entity, causing double points on retry
@@ -758,7 +782,7 @@ public class CommentService(
 
             if (comment == null)
             {
-                return (false, "Comment not found");
+                return (false, DomainErrors.CommentNotFound);
             }
 
             // Check if vote exists (for user-friendly error message)
@@ -773,10 +797,18 @@ public class CommentService(
             // Use execution strategy to wrap the transaction
             IExecutionStrategy strategy = context.Database.CreateExecutionStrategy();
 
-            var removedByThisRequest = await strategy.ExecuteAsync(async () =>
+            var removeResult = await strategy.ExecuteAsync(async () =>
             {
                 // Clear change tracker to ensure clean state on retry
                 context.ChangeTracker.Clear();
+
+                // Re-check IsDeleted inside the retry loop to close the TOCTOU window
+                bool isDeleted = await context.UserProfiles
+                    .IgnoreQueryFilters()
+                    .Where(u => u.Id == user.Id && u.IsDeleted)
+                    .AnyAsync();
+                if (isDeleted)
+                    return (removed: false, deleted: true);
 
                 await using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
 
@@ -789,7 +821,7 @@ public class CommentService(
                 if (rowsDeleted == 0)
                 {
                     await transaction.RollbackAsync();
-                    return false; // Idempotent success
+                    return (removed: false, deleted: false); // Idempotent success
                 }
 
                 // Use atomic database operations to prevent race conditions on helpful counts
@@ -797,8 +829,9 @@ public class CommentService(
                     .Where(c => c.Id == commentId)
                     .ExecuteUpdateAsync(c => c.SetProperty(x => x.HelpfulCount, x => Math.Max(0, x.HelpfulCount - 1)));
 
+                // Guard against soft-deleted users since ExecuteUpdateAsync bypasses global filters
                 await context.UserProfiles
-                    .Where(u => u.Id == comment.UserId)
+                    .Where(u => u.Id == comment.UserId && !u.IsDeleted)
                     .ExecuteUpdateAsync(u => u
                         .SetProperty(x => x.HelpfulComments, x => Math.Max(0, x.HelpfulComments - 1))
                         .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
@@ -810,10 +843,13 @@ public class CommentService(
                     "helpful_vote_removed");
 
                 await transaction.CommitAsync();
-                return true;
+                return (removed: true, deleted: false);
             });
 
-            if (removedByThisRequest)
+            if (removeResult.deleted)
+                return (false, DomainErrors.AccountDeleted);
+
+            if (removeResult.removed)
             {
                 logger.LogInformation(
                     "User {UserId} removed vote from comment {CommentId}, deducted {Points} points from author {AuthorId}",
@@ -843,13 +879,21 @@ public class CommentService(
             UpdatedAt = comment.UpdatedAt,
             ParentCommentId = comment.ParentCommentId,
             ReplyCount = replyCount,
-            User = new CommentUserResponse
-            {
-                Id = comment.User.Id,
-                DisplayName = comment.User.DisplayName,
-                PhotoUrl = comment.User.PhotoUrl,
-                Level = comment.User.Level
-            },
+            User = comment.User is not null
+                ? new CommentUserResponse
+                {
+                    Id = comment.User.Id,
+                    DisplayName = comment.User.DisplayName,
+                    PhotoUrl = comment.User.PhotoUrl,
+                    Level = comment.User.Level
+                }
+                : new CommentUserResponse
+                {
+                    Id = Guid.Empty,
+                    DisplayName = "Deleted User",
+                    PhotoUrl = null,
+                    Level = 0
+                },
             HasVoted = hasVoted
         };
     }

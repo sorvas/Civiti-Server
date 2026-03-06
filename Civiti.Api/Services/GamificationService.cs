@@ -44,10 +44,18 @@ public class GamificationService(
     {
         try
         {
-            UserProfile? user = await context.UserProfiles.FindAsync(userId);
+            UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(u => u.Id == userId);
             if (user == null)
             {
                 logger.LogWarning("User not found for awarding points: {UserId}", userId);
+                return;
+            }
+
+            if (user.IsDeleted)
+            {
+                logger.LogDebug("Skipping point award for soft-deleted user: {UserId}", userId);
                 return;
             }
 
@@ -89,10 +97,18 @@ public class GamificationService(
     {
         try
         {
-            UserProfile? user = await context.UserProfiles.FindAsync(userId);
+            UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(u => u.Id == userId);
             if (user == null)
             {
                 logger.LogWarning("User not found for deducting points: {UserId}", userId);
+                return;
+            }
+
+            if (user.IsDeleted)
+            {
+                logger.LogDebug("Skipping point deduction for soft-deleted user: {UserId}", userId);
                 return;
             }
 
@@ -130,12 +146,19 @@ public class GamificationService(
         try
         {
             UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .Include(u => u.UserBadges)
                 .FirstOrDefaultAsync(u => u.Id == userId);
 
             if (user == null)
             {
                 logger.LogWarning("User not found for badge check: {UserId}", userId);
+                return;
+            }
+
+            if (user.IsDeleted)
+            {
+                logger.LogDebug("Skipping badge check for soft-deleted user: {UserId}", userId);
                 return;
             }
 
@@ -208,11 +231,27 @@ public class GamificationService(
     {
         try
         {
-            // Get achievements from database
-            List<UserAchievement> userAchievements = await context.UserAchievements
-                .Include(ua => ua.Achievement)
-                .Where(ua => ua.UserId == userId && !ua.Completed)
-                .ToListAsync();
+            // Guard + data load in a single query (mirrors CheckAndAwardBadgesAsync pattern).
+            // This method runs 3-4 times per user action, so one round-trip matters.
+            UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
+                .Include(u => u.UserAchievements.Where(ua => !ua.Completed))
+                    .ThenInclude(ua => ua.Achievement)
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
+            if (user == null)
+            {
+                logger.LogWarning("User not found for achievement check: {UserId}", userId);
+                return;
+            }
+
+            if (user.IsDeleted)
+            {
+                logger.LogDebug("Skipping achievement check for soft-deleted user: {UserId}", userId);
+                return;
+            }
+
+            List<UserAchievement> userAchievements = user.UserAchievements;
 
             // Also check change tracker for newly added achievements not yet saved
             HashSet<Guid> achievementIdsInDb = userAchievements.Select(ua => ua.AchievementId).ToHashSet();
@@ -286,8 +325,10 @@ public class GamificationService(
                         userId, userAchievement.Achievement.Title);
 
                     var capturedAchievementTitle = userAchievement.Achievement.Title;
-                    UserProfile? achiever = await context.UserProfiles.FindAsync(userId);
-                    if (achiever != null)
+                    UserProfile? achiever = await context.UserProfiles
+                        .IgnoreQueryFilters()
+                        .FirstOrDefaultAsync(u => u.Id == userId);
+                    if (achiever != null && !achiever.IsDeleted)
                     {
                         _pendingNotifications.Add(() => notificationService.NotifyAchievementCompletedAsync(achiever, capturedAchievementTitle));
                     }

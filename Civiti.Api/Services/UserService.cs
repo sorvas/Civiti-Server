@@ -1,4 +1,7 @@
+using System.Security.Cryptography;
 using Civiti.Api.Data;
+using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Infrastructure.Extensions;
 using Civiti.Api.Models.Domain;
 using Civiti.Api.Models.Requests.Auth;
@@ -15,68 +18,20 @@ public class UserService(
     ILogger<UserService> logger,
     CivitiDbContext context,
     IGamificationService gamificationService,
-    INotificationService notificationService)
+    INotificationService notificationService,
+    ISupabaseService supabaseService)
     : IUserService
 {
-    public async Task<UserGamificationResponse> GetUserGamificationAsync(string supabaseUserId)
+    // Note: UserProfile has a global query filter (HasQueryFilter) that automatically
+    // excludes IsDeleted rows. Mutation methods use IgnoreQueryFilters() with a single
+    // query to distinguish "user not found" from "account deleted" without a second round-trip.
+    public async Task<UserGamificationResponse?> GetUserGamificationAsync(string supabaseUserId)
     {
         try
         {
             UserProfile? user = await context.UserProfiles
                 .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
-
-            if (user == null)
-            {
-                logger.LogWarning("User not found for Supabase ID: {SupabaseUserId}", supabaseUserId);
-                return new UserGamificationResponse();
-            }
-
-            // Get recent badges
-            List<BadgeResponse> recentBadges = await gamificationService.GetUserBadgesAsync(user.Id);
-            List<AchievementProgressResponse> activeAchievements = await gamificationService.GetUserAchievementsAsync(user.Id);
-
-            // Calculate level points
-            var nextLevel = user.Level + 1;
-            var currentLevelPoints = GetPointsForLevel(user.Level);
-            var nextLevelPoints = GetPointsForLevel(nextLevel);
-            var pointsToNextLevel = nextLevelPoints - user.Points;
-            var pointsInCurrentLevel = user.Points - currentLevelPoints;
-            var levelRange = nextLevelPoints - currentLevelPoints;
-            var levelProgressPercentage = levelRange > 0 ? Math.Round((double)pointsInCurrentLevel / levelRange * 100, 2) : 100;
-
-            return new UserGamificationResponse
-            {
-                Points = user.Points,
-                Level = user.Level,
-                IssuesReported = user.IssuesReported,
-                IssuesResolved = user.IssuesResolved,
-                CommunityVotes = user.CommunityVotes,
-                CurrentLoginStreak = user.CurrentLoginStreak,
-                LongestLoginStreak = user.LongestLoginStreak,
-                RecentBadges = recentBadges.Take(5).ToList(),
-                ActiveAchievements = activeAchievements.Where(a => !a.Completed).Take(5).ToList(),
-                CurrentLevelPoints = currentLevelPoints,
-                NextLevelPoints = nextLevelPoints,
-                PointsToNextLevel = pointsToNextLevel > 0 ? pointsToNextLevel : 0,
-                PointsInCurrentLevel = pointsInCurrentLevel > 0 ? pointsInCurrentLevel : 0,
-                LevelProgressPercentage = levelProgressPercentage
-            };
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error getting user gamification for Supabase ID: {SupabaseUserId}", supabaseUserId);
-            throw new InvalidOperationException($"Failed to get user gamification for Supabase ID: {supabaseUserId}", ex);
-        }
-    }
-
-    public async Task<UserProfileResponse?> GetUserProfileAsync(string supabaseUserId)
-    {
-        try
-        {
-            // Use AsNoTracking since we only need to read user data for the response
-            UserProfile? user = await context.UserProfiles
-                .AsNoTracking()
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
@@ -84,11 +39,72 @@ public class UserService(
                 logger.LogWarning("User not found for Supabase ID: {SupabaseUserId}", supabaseUserId);
                 return null;
             }
+            if (user.IsDeleted)
+                throw new AccountDeletedException();
+
+            return await BuildGamificationResponseAsync(user);
+        }
+        catch (Exception ex) when (ex is not InvalidOperationException and not AccountDeletedException)
+        {
+            logger.LogError(ex, "Error getting user gamification for Supabase ID: {SupabaseUserId}", supabaseUserId);
+            throw new InvalidOperationException($"Failed to get user gamification for Supabase ID: {supabaseUserId}", ex);
+        }
+    }
+
+    private async Task<UserGamificationResponse> BuildGamificationResponseAsync(UserProfile user)
+    {
+        List<BadgeResponse> recentBadges = await gamificationService.GetUserBadgesAsync(user.Id);
+        List<AchievementProgressResponse> activeAchievements = await gamificationService.GetUserAchievementsAsync(user.Id);
+
+        var nextLevel = user.Level + 1;
+        var currentLevelPoints = GetPointsForLevel(user.Level);
+        var nextLevelPoints = GetPointsForLevel(nextLevel);
+        var pointsToNextLevel = nextLevelPoints - user.Points;
+        var pointsInCurrentLevel = user.Points - currentLevelPoints;
+        var levelRange = nextLevelPoints - currentLevelPoints;
+        var levelProgressPercentage = levelRange > 0 ? Math.Round((double)pointsInCurrentLevel / levelRange * 100, 2) : 100;
+
+        return new UserGamificationResponse
+        {
+            Points = user.Points,
+            Level = user.Level,
+            IssuesReported = user.IssuesReported,
+            IssuesResolved = user.IssuesResolved,
+            CommunityVotes = user.CommunityVotes,
+            CurrentLoginStreak = user.CurrentLoginStreak,
+            LongestLoginStreak = user.LongestLoginStreak,
+            RecentBadges = recentBadges.Take(5).ToList(),
+            ActiveAchievements = activeAchievements.Where(a => !a.Completed).Take(5).ToList(),
+            CurrentLevelPoints = currentLevelPoints,
+            NextLevelPoints = nextLevelPoints,
+            PointsToNextLevel = pointsToNextLevel > 0 ? pointsToNextLevel : 0,
+            PointsInCurrentLevel = pointsInCurrentLevel > 0 ? pointsInCurrentLevel : 0,
+            LevelProgressPercentage = levelProgressPercentage
+        };
+    }
+
+    public async Task<UserProfileResponse?> GetUserProfileAsync(string supabaseUserId)
+    {
+        try
+        {
+            // Bypass global filter to distinguish "not found" from "soft-deleted"
+            UserProfile? user = await context.UserProfiles
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
+
+            if (user == null)
+            {
+                logger.LogWarning("User not found for Supabase ID: {SupabaseUserId}", supabaseUserId);
+                return null;
+            }
+            if (user.IsDeleted)
+                throw new AccountDeletedException();
 
             // Track login streak (once per day) and get updated user data in a single operation
             user = await UpdateLoginStreakAsync(user.Id) ?? user;
 
-            UserGamificationResponse gamification = await GetUserGamificationAsync(supabaseUserId);
+            UserGamificationResponse gamification = await BuildGamificationResponseAsync(user);
 
             return new UserProfileResponse
             {
@@ -111,7 +127,7 @@ public class UserService(
                 CreatedAt = user.CreatedAt
             };
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not InvalidOperationException and not AccountDeletedException)
         {
             logger.LogError(ex, "Error getting user profile for Supabase ID: {SupabaseUserId}", supabaseUserId);
             throw new InvalidOperationException($"Failed to get user profile for Supabase ID: {supabaseUserId}", ex);
@@ -130,6 +146,21 @@ public class UserService(
         if (existingProfile != null)
         {
             return existingProfile;
+        }
+
+        // Block re-creation of soft-deleted accounts.
+        // GetUserProfileAsync (above) already uses IgnoreQueryFilters and throws
+        // AccountDeleted for deleted rows — so if we reach here, the user truly didn't
+        // exist at that point. However, a TOCTOU race is possible: another request could
+        // create and soft-delete a profile between the null return above and the INSERT
+        // below. This explicit check with IgnoreQueryFilters closes that window.
+        bool wasDeleted = await context.UserProfiles
+            .IgnoreQueryFilters()
+            .AnyAsync(u => u.SupabaseUserId == supabaseUserId && u.IsDeleted);
+        if (wasDeleted)
+        {
+            logger.LogWarning("Blocked profile re-creation for deleted user {SupabaseUserId}", supabaseUserId);
+            throw new AccountDeletedException();
         }
 
         // Profile doesn't exist - attempt to create it
@@ -174,6 +205,13 @@ public class UserService(
             // Clear the failed entity from the change tracker and retry the get
             context.ChangeTracker.Clear();
 
+            // Distinguish concurrent soft-delete from concurrent profile creation
+            bool deletedDuringRace = await context.UserProfiles
+                .IgnoreQueryFilters()
+                .AnyAsync(u => u.SupabaseUserId == supabaseUserId && u.IsDeleted);
+            if (deletedDuringRace)
+                throw new AccountDeletedException();
+
             logger.LogInformation(
                 "Profile creation conflict for {SupabaseUserId}, fetching existing profile (likely concurrent creation)",
                 supabaseUserId);
@@ -188,7 +226,7 @@ public class UserService(
             logger.LogError(ex, "Database error in GetOrCreateUserProfileAsync for Supabase ID: {SupabaseUserId}", supabaseUserId);
             throw new InvalidOperationException($"Failed to get or create user profile for Supabase ID: {supabaseUserId}", ex);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not InvalidOperationException and not AccountDeletedException)
         {
             logger.LogError(ex, "Error in GetOrCreateUserProfileAsync for Supabase ID: {SupabaseUserId}", supabaseUserId);
             throw new InvalidOperationException($"Failed to get or create user profile for Supabase ID: {supabaseUserId}", ex);
@@ -210,13 +248,19 @@ public class UserService(
 
             try
             {
-                // Re-fetch user inside execution strategy to get fresh data on retry
-                UserProfile? user = await context.UserProfiles.FirstOrDefaultAsync(u => u.Id == userId);
+                // Re-fetch user inside execution strategy to get fresh data on retry.
+                // Use IgnoreQueryFilters so a concurrent soft-delete doesn't silently
+                // return null and let stale data fall through as 200 OK.
+                UserProfile? user = await context.UserProfiles
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(u => u.Id == userId);
                 if (user == null)
                 {
                     logger.LogWarning("User {UserId} not found for login streak update", userId);
                     return null;
                 }
+                if (user.IsDeleted)
+                    throw new AccountDeletedException();
 
                 DateTime today = DateTime.UtcNow.Date;
                 DateTime lastActivityDate = user.LastActivityDate.Date;
@@ -277,6 +321,12 @@ public class UserService(
                 context.Entry(user).State = EntityState.Detached;
                 return user;
             }
+            catch (AccountDeletedException)
+            {
+                await transaction.RollbackAsync();
+                logger.LogWarning("Login streak update skipped — user {UserId} was concurrently deleted", userId);
+                throw;
+            }
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
@@ -291,7 +341,14 @@ public class UserService(
         try
         {
             UserProfile? existingUser = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
+
+            if (existingUser is { IsDeleted: true })
+            {
+                logger.LogWarning("Blocked profile re-creation for deleted user {SupabaseUserId}", supabaseUserId);
+                throw new AccountDeletedException();
+            }
 
             if (existingUser != null)
             {
@@ -340,10 +397,6 @@ public class UserService(
             // Return full profile with gamification (will be empty for new user)
             return (await GetUserProfileAsync(supabaseUserId))!;
         }
-        catch (ArgumentException)
-        {
-            throw; // Re-throw argument exceptions as-is
-        }
         catch (DbUpdateException)
         {
             // Clear the failed entity from change tracker before re-throwing
@@ -351,7 +404,7 @@ public class UserService(
             context.ChangeTracker.Clear();
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not ArgumentException and not InvalidOperationException and not AccountDeletedException)
         {
             logger.LogError(ex, "Error creating user profile for Supabase ID: {SupabaseUserId}", supabaseUserId);
             throw new InvalidOperationException($"Failed to create user profile for Supabase ID: {supabaseUserId}", ex);
@@ -363,13 +416,16 @@ public class UserService(
         try
         {
             UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
             {
                 logger.LogWarning("User not found for Supabase ID: {SupabaseUserId}", supabaseUserId);
-                throw new InvalidOperationException("User not found");
+                throw new InvalidOperationException(DomainErrors.UserNotFound);
             }
+            if (user.IsDeleted)
+                throw new AccountDeletedException();
 
             // Update only provided fields
             if (!string.IsNullOrWhiteSpace(request.DisplayName))
@@ -410,7 +466,7 @@ public class UserService(
 
             return (await GetUserProfileAsync(supabaseUserId))!;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not InvalidOperationException and not AccountDeletedException)
         {
             logger.LogError(ex, "Error updating user profile for Supabase ID: {SupabaseUserId}", supabaseUserId);
             throw new InvalidOperationException($"Failed to update user profile for Supabase ID: {supabaseUserId}", ex);
@@ -513,32 +569,106 @@ public class UserService(
         }
     }
 
-    public async Task<bool> DeleteUserAsync(string supabaseUserId)
+    public async Task<DeleteUserResult> DeleteUserAsync(string supabaseUserId)
     {
         try
         {
-            UserProfile? user = await context.UserProfiles
-                .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
+            // Use execution strategy to handle transient failures during PII scrub.
+            // Re-fetch user inside callback to ensure fresh data on retry.
+            IExecutionStrategy strategy = context.Database.CreateExecutionStrategy();
 
-            if (user == null)
+            bool alreadyDeleted = false;
+            Guid? deletedUserId = null;
+
+            await strategy.ExecuteAsync(async () =>
             {
-                logger.LogWarning("User not found for deletion: {SupabaseUserId}", supabaseUserId);
-                return false;
+                // Reset closure state on each retry to prevent stale flags from a
+                // previous attempt (e.g. SaveChangesAsync succeeded but a later
+                // transient failure triggered a retry — without reset the retry
+                // would see IsDeleted = true and incorrectly return AlreadyDeleted).
+                alreadyDeleted = false;
+                deletedUserId = null;
+
+                // Clear change tracker to ensure fresh data on retry
+                context.ChangeTracker.Clear();
+
+                UserProfile? user = await context.UserProfiles
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
+
+                if (user == null)
+                {
+                    logger.LogWarning("User not found for deletion: {SupabaseUserId}", supabaseUserId);
+                    return;
+                }
+
+                // Already soft-deleted locally — skip DB work, just flag for Supabase retry.
+                if (user.IsDeleted)
+                {
+                    alreadyDeleted = true;
+                    return;
+                }
+
+                // Explicit transaction ensures all PII scrub fields are committed atomically.
+                // Without this, a failure mid-SaveChangesAsync could leave partial PII intact.
+                await using var transaction = await context.Database.BeginTransactionAsync();
+
+                // 1. Anonymize PII and soft-delete locally FIRST so the DB is always consistent.
+                //    Keep the original SupabaseUserId so the global query filter + the
+                //    IgnoreQueryFilters guard in GetOrCreateUserProfileAsync blocks re-creation.
+                var opaqueId = Convert.ToHexString(SHA256.HashData(user.Id.ToByteArray()))[..32].ToLowerInvariant();
+                user.Email = $"deleted_{opaqueId}@civica.ro";
+                user.DisplayName = "Deleted User";
+                user.PhotoUrl = null;
+                user.Phone = null;
+                user.County = "Unknown";
+                user.City = "Unknown";
+                user.District = "Unknown";
+                user.ResidenceType = null;
+                // SupabaseUserId intentionally preserved for deleted-user lookup
+
+                // Disable all notification preferences
+                user.IssueUpdatesEnabled = false;
+                user.CommunityNewsEnabled = false;
+                user.MonthlyDigestEnabled = false;
+                user.AchievementsEnabled = false;
+
+                // Mark as deleted
+                user.IsDeleted = true;
+                user.DeletedAt = DateTime.UtcNow;
+                user.UpdatedAt = DateTime.UtcNow;
+
+                await context.SaveChangesAsync();
+                await transaction.CommitAsync();
+                deletedUserId = user.Id;
+            });
+
+            // User was not found in the database
+            if (deletedUserId == null && !alreadyDeleted)
+                return DeleteUserResult.NotFound;
+
+            // 2. Revoke Supabase auth AFTER the local save succeeds (or was already done).
+            //    If this fails, PII is already scrubbed and the soft-delete flag
+            //    prevents profile re-creation. The stale auth can be cleaned up later.
+            var supabaseDeleted = await supabaseService.DeleteAuthUserAsync(supabaseUserId);
+            if (alreadyDeleted)
+            {
+                logger.LogInformation(
+                    "Retried Supabase auth cleanup for previously-deleted user {SupabaseUserId}: auth {AuthResult}",
+                    supabaseUserId, supabaseDeleted ? "revoked" : "still pending");
+                return DeleteUserResult.AlreadyDeleted;
             }
 
-            // Soft-delete - anonymize the data
-            user.Email = $"deleted_{user.Id}@civica.ro";
-            user.DisplayName = "Deleted User";
-            user.PhotoUrl = null;
-            user.County = "Unknown";
-            user.City = "Unknown";
-            user.District = "Unknown";
-            user.UpdatedAt = DateTime.UtcNow;
+            if (!supabaseDeleted)
+            {
+                logger.LogWarning(
+                    "Supabase auth deletion failed for user {UserId} after local soft-delete. " +
+                    "Auth record requires manual cleanup.", deletedUserId);
+            }
 
-            await context.SaveChangesAsync();
-
-            logger.LogInformation("Soft deleted user {UserId}", user.Id);
-            return true;
+            logger.LogInformation("Soft deleted user {UserId} (Supabase auth removed: {SupabaseDeleted})",
+                deletedUserId, supabaseDeleted);
+            return DeleteUserResult.Deleted;
         }
         catch (Exception ex)
         {

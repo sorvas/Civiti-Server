@@ -1,4 +1,5 @@
 using Civiti.Api.Data;
+using Civiti.Api.Infrastructure.Constants;
 using Civiti.Api.Models.Domain;
 using Civiti.Api.Models.Requests.Admin;
 using Civiti.Api.Models.Responses.Admin;
@@ -86,7 +87,7 @@ public class AdminService(
                     CreatedAt = i.CreatedAt,
                     PhotoCount = i.Photos.Count,
                     EmailsSent = i.EmailsSent,
-                    UserName = i.User.DisplayName
+                    UserName = i.User != null ? i.User.DisplayName : "Deleted User"
                 })
                 .ToListAsync();
 
@@ -110,7 +111,11 @@ public class AdminService(
     {
         try
         {
+            // IgnoreQueryFilters disables the UserProfile global filter so that
+            // Include(i => i.User) loads deleted authors (showing their anonymized PII)
+            // instead of silently returning null.
             Issue? issue = await context.Issues
+                .IgnoreQueryFilters()
                 .Include(i => i.User)
                 .Include(i => i.Photos)
                 .Include(i => i.AdminActions)
@@ -150,12 +155,12 @@ public class AdminService(
                 CreatedAt = issue.CreatedAt,
                 UpdatedAt = issue.UpdatedAt,
                 UserId = issue.UserId,
-                UserName = issue.User.DisplayName,
-                UserEmail = issue.User.Email,
-                UserPhone = issue.User.Phone,
+                UserName = issue.User?.DisplayName ?? "Deleted User",
+                UserEmail = issue.User?.Email ?? string.Empty,
+                UserPhone = issue.User?.Phone,
                 UserTotalIssues = userTotalIssues,
                 UserResolvedIssues = userResolvedIssues,
-                UserPoints = issue.User.Points,
+                UserPoints = issue.User?.Points ?? 0,
                 Photos = issue.Photos.Select(p => new AdminIssuePhotoResponse
                 {
                     Id = p.Id,
@@ -216,7 +221,7 @@ public class AdminService(
                 return new IssueActionResponse
                 {
                     Success = false,
-                    Message = "Issue not found"
+                    Message = DomainErrors.IssueNotFound
                 };
             }
 
@@ -294,7 +299,13 @@ public class AdminService(
                 // Send notification to issue author
                 try
                 {
-                    await notificationService.NotifyIssueApprovedAsync(issue, issue.User);
+                    UserProfile? issueAuthor = await context.UserProfiles
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(u => u.Id == issue.UserId);
+                    if (issueAuthor != null)
+                    {
+                        await notificationService.NotifyIssueApprovedAsync(issue, issueAuthor);
+                    }
                 }
                 catch (Exception notifyEx)
                 {
@@ -341,7 +352,7 @@ public class AdminService(
                 return new IssueActionResponse
                 {
                     Success = false,
-                    Message = "Issue not found"
+                    Message = DomainErrors.IssueNotFound
                 };
             }
 
@@ -453,7 +464,7 @@ public class AdminService(
                 return new IssueActionResponse
                 {
                     Success = false,
-                    Message = "Issue not found"
+                    Message = DomainErrors.IssueNotFound
                 };
             }
 
@@ -599,8 +610,8 @@ public class AdminService(
                 .ToListAsync();
             Dictionary<string, int> urgencyBreakdown = urgencyCountsRaw.ToDictionary(x => x.Urgency.ToString(), x => x.Count);
 
-            // User statistics
-            var totalUsers = await context.UserProfiles.CountAsync();
+            // User statistics (include soft-deleted users so the dashboard reflects true totals)
+            var totalUsers = await context.UserProfiles.IgnoreQueryFilters().CountAsync();
             var activeUsersThisMonth = await context.Issues
                 .Where(i => i.CreatedAt >= monthStart)
                 .Select(i => i.UserId)
