@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Civiti.Api.Data;
+using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Models.Domain;
 using Civiti.Api.Models.Requests.Issues;
 using Civiti.Api.Models.Responses.Authority;
@@ -44,7 +46,6 @@ public class IssueService(
 
             IQueryable<Issue> query = context.Issues
                 .Include(i => i.Photos)
-                .Include(i => i.User)
                 .AsQueryable();
 
             // Apply status filter - default to Active only if not specified
@@ -257,12 +258,19 @@ public class IssueService(
                     Email = ia.Authority?.Email ?? ia.CustomEmail ?? string.Empty,
                     IsPredefined = ia.AuthorityId.HasValue
                 }).ToList(),
-                User = new UserBasicResponse
-                {
-                    Id = issue.User.Id,
-                    Name = issue.User.DisplayName,
-                    PhotoUrl = issue.User.PhotoUrl
-                }
+                User = issue.User is not null
+                    ? new UserBasicResponse
+                    {
+                        Id = issue.User.Id,
+                        Name = issue.User.DisplayName,
+                        PhotoUrl = issue.User.PhotoUrl
+                    }
+                    : new UserBasicResponse
+                    {
+                        Id = issue.UserId,
+                        Name = "Deleted User",
+                        PhotoUrl = null
+                    }
             };
         }
         catch (Exception ex)
@@ -285,14 +293,15 @@ public class IssueService(
 
             try
             {
-            // Get user profile
+            // Get user profile (single query bypassing global filter to distinguish deleted vs missing)
             UserProfile? userProfile = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (userProfile == null)
-            {
-                throw new InvalidOperationException($"User profile not found for Supabase ID: {supabaseUserId}");
-            }
+                throw new InvalidOperationException(DomainErrors.UserProfileNotFound);
+            if (userProfile.IsDeleted)
+                throw new AccountDeletedException();
 
             // Create the issue
             Issue issue = new()
@@ -478,6 +487,16 @@ public class IssueService(
                 CreatedAt = issue.CreatedAt
             };
         }
+            catch (AccountDeletedException)
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+            catch (InvalidOperationException)
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
@@ -509,7 +528,7 @@ public class IssueService(
             if (issueStatus == null)
             {
                 logger.LogWarning("Issue {IssueId} not found", issueId);
-                return (false, "Issue not found");
+                return (false, DomainErrors.IssueNotFound);
             }
 
             // Only allow incrementing for active issues
@@ -590,25 +609,24 @@ public class IssueService(
     {
         try
         {
-            // Get user profile
+            // Get user profile (single query bypassing global filter to distinguish deleted vs missing)
             UserProfile? userProfile = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (userProfile == null)
             {
-                return new PagedResult<IssueListResponse>
-                {
-                    Items = [],
-                    TotalItems = 0,
-                    Page = request.Page,
-                    PageSize = request.PageSize,
-                    TotalPages = 0
-                };
+                logger.LogWarning("User profile not found for Supabase user: {SupabaseUserId}", supabaseUserId);
+                throw new InvalidOperationException(DomainErrors.UserProfileNotFound);
+            }
+
+            if (userProfile.IsDeleted)
+            {
+                throw new AccountDeletedException();
             }
 
             IQueryable<Issue> query = context.Issues
                 .Include(i => i.Photos)
-                .Include(i => i.User)
                 .Where(i => i.UserId == userProfile.Id)
                 .AsQueryable();
 
@@ -669,7 +687,7 @@ public class IssueService(
                 TotalPages = (int)Math.Ceiling((double)totalItems / request.PageSize)
             };
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not InvalidOperationException and not AccountDeletedException)
         {
             logger.LogError(ex, "Error getting user issues for {SupabaseUserId}", supabaseUserId);
             throw;
@@ -693,14 +711,15 @@ public class IssueService(
 
             try
             {
-                // Get user profile
+                // Get user profile (single query bypassing global filter to distinguish deleted vs missing)
                 UserProfile? userProfile = await context.UserProfiles
+                    .IgnoreQueryFilters()
                     .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
                 if (userProfile == null)
-                {
-                    return (false, "User profile not found");
-                }
+                    return (false, DomainErrors.UserProfileNotFound);
+                if (userProfile.IsDeleted)
+                    return (false, DomainErrors.AccountDeleted);
 
                 // Get the issue
                 Issue? issue = await context.Issues
@@ -708,13 +727,13 @@ public class IssueService(
 
                 if (issue == null)
                 {
-                    return (false, "Issue not found");
+                    return (false, DomainErrors.IssueNotFound);
                 }
 
                 // Check ownership (admins can bypass)
                 if (!isAdmin && issue.UserId != userProfile.Id)
                 {
-                    return (false, "You can only change status of your own issues");
+                    return (false, DomainErrors.ChangeOwnIssueStatusOnly);
                 }
 
                 // Validate the requested status transition
@@ -735,8 +754,11 @@ public class IssueService(
                     // Get the issue owner's profile to update their stats
                     UserProfile? issueOwner = issue.UserId == userProfile.Id
                         ? userProfile
-                        : await context.UserProfiles.FindAsync(issue.UserId);
+                        : await context.UserProfiles.FirstOrDefaultAsync(u => u.Id == issue.UserId);
 
+                    // Owner may be null if their account was soft-deleted (filtered out by
+                    // the global query filter). Skip the stat update — the deleted user's
+                    // profile is anonymised and no longer participates in gamification.
                     if (issueOwner != null)
                     {
                         issueOwner.IssuesResolved++;
@@ -797,6 +819,7 @@ public class IssueService(
                         UserProfile? issueOwner = issue.UserId == userProfile.Id
                             ? userProfile
                             : await context.UserProfiles.AsNoTracking().FirstOrDefaultAsync(u => u.Id == issue.UserId);
+                        // Skip notification if owner was soft-deleted (filtered by global query filter)
                         if (issueOwner != null)
                         {
                             await notificationService.NotifyIssueResolvedAsync(issue, issueOwner);
@@ -873,14 +896,15 @@ public class IssueService(
 
             try
             {
-                // Get user profile
+                // Get user profile (single query bypassing global filter to distinguish deleted vs missing)
                 UserProfile? userProfile = await context.UserProfiles
+                    .IgnoreQueryFilters()
                     .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
                 if (userProfile == null)
-                {
-                    return (false, null, "User profile not found");
-                }
+                    return (false, null, DomainErrors.UserProfileNotFound);
+                if (userProfile.IsDeleted)
+                    return (false, null, DomainErrors.AccountDeleted);
 
                 // Get the issue with related data
                 Issue? issue = await context.Issues
@@ -890,13 +914,13 @@ public class IssueService(
 
                 if (issue == null)
                 {
-                    return (false, null, "Issue not found");
+                    return (false, null, DomainErrors.IssueNotFound);
                 }
 
                 // Check ownership
                 if (issue.UserId != userProfile.Id)
                 {
-                    return (false, null, "You can only edit your own issues");
+                    return (false, null, DomainErrors.EditOwnIssuesOnly);
                 }
 
                 // Check if the issue can be edited (not Cancelled or Resolved)
@@ -1108,12 +1132,19 @@ public class IssueService(
                         Email = ia.Authority?.Email ?? ia.CustomEmail ?? string.Empty,
                         IsPredefined = ia.AuthorityId.HasValue
                     }).ToList(),
-                    User = new UserBasicResponse
-                    {
-                        Id = issue.User.Id,
-                        Name = issue.User.DisplayName,
-                        PhotoUrl = issue.User.PhotoUrl
-                    }
+                    User = issue.User is not null
+                        ? new UserBasicResponse
+                        {
+                            Id = issue.User.Id,
+                            Name = issue.User.DisplayName,
+                            PhotoUrl = issue.User.PhotoUrl
+                        }
+                        : new UserBasicResponse
+                        {
+                            Id = issue.UserId,
+                            Name = "Deleted User",
+                            PhotoUrl = null
+                        }
                 };
 
                 // Commit only after everything is ready
@@ -1136,23 +1167,22 @@ public class IssueService(
     {
         try
         {
-            // Pre-validate outside the transaction
+            // Pre-validate outside the transaction (single query bypassing global filter to distinguish deleted vs missing)
             UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
-            {
-                return (false, "User not found");
-            }
+                return (false, DomainErrors.UserNotFound);
+            if (user.IsDeleted)
+                return (false, DomainErrors.AccountDeleted);
 
-            // Don't include User to avoid tracking UserProfile - gamification uses FindAsync
-            // which would return the tracked entity, causing double points on retry
             Issue? issue = await context.Issues
                 .FirstOrDefaultAsync(i => i.Id == issueId);
 
             if (issue == null)
             {
-                return (false, "Issue not found");
+                return (false, DomainErrors.IssueNotFound);
             }
 
             // Can only vote on active issues
@@ -1188,6 +1218,16 @@ public class IssueService(
                 // Clear change tracker to ensure clean state on retry
                 context.ChangeTracker.Clear();
 
+                // Re-check IsDeleted inside the retry loop to close the TOCTOU window:
+                // a concurrent soft-delete between the pre-validation above and the INSERT
+                // would otherwise create an orphaned IssueVotes row.
+                bool isDeleted = await context.UserProfiles
+                    .IgnoreQueryFilters()
+                    .Where(u => u.Id == user.Id && u.IsDeleted)
+                    .AnyAsync();
+                if (isDeleted)
+                    return (voted: false, deleted: true);
+
                 // Check if this vote was already created in a previous retry attempt
                 IssueVote? existingVote = await context.IssueVotes
                     .FirstOrDefaultAsync(v => v.Id == voteId);
@@ -1195,7 +1235,7 @@ public class IssueService(
                 if (existingVote != null)
                 {
                     // Vote was created on a previous attempt - treat as success
-                    return true;
+                    return (voted: true, deleted: false);
                 }
 
                 await using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
@@ -1226,19 +1266,20 @@ public class IssueService(
                 {
                     // Issue was deactivated between check and update - rollback everything
                     await transaction.RollbackAsync();
-                    return false;
+                    return (voted: false, deleted: false);
                 }
 
                 // Increment CommunityVotes on the issue author's profile (votes received)
+                // Guard against soft-deleted authors explicitly since ExecuteUpdateAsync bypasses global filters
                 await context.UserProfiles
-                    .Where(u => u.Id == issue.UserId)
+                    .Where(u => u.Id == issue.UserId && !u.IsDeleted)
                     .ExecuteUpdateAsync(u => u
                         .SetProperty(x => x.CommunityVotes, x => x.CommunityVotes + 1)
                         .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
 
                 // Increment VotesGiven on the voter's profile
                 await context.UserProfiles
-                    .Where(u => u.Id == user.Id)
+                    .Where(u => u.Id == user.Id && !u.IsDeleted)
                     .ExecuteUpdateAsync(u => u
                         .SetProperty(x => x.VotesGiven, x => x.VotesGiven + 1)
                         .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
@@ -1258,10 +1299,13 @@ public class IssueService(
                 // Flush gamification notifications now that the transaction is committed
                 await gamificationService.FlushPendingNotificationsAsync();
 
-                return true;
+                return (voted: true, deleted: false);
             });
 
-            if (!votedByThisRequest)
+            if (votedByThisRequest.deleted)
+                return (false, DomainErrors.AccountDeleted);
+
+            if (!votedByThisRequest.voted)
             {
                 // Issue was deactivated during the voting process
                 return (false, "Issue is no longer active");
@@ -1311,23 +1355,22 @@ public class IssueService(
     {
         try
         {
-            // Pre-validate outside the transaction
+            // Pre-validate outside the transaction (single query bypassing global filter to distinguish deleted vs missing)
             UserProfile? user = await context.UserProfiles
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
 
             if (user == null)
-            {
-                return (false, "User not found");
-            }
+                return (false, DomainErrors.UserNotFound);
+            if (user.IsDeleted)
+                return (false, DomainErrors.AccountDeleted);
 
-            // Don't include User to avoid tracking UserProfile - gamification uses FindAsync
-            // which would return the tracked entity, causing double points on retry
             Issue? issue = await context.Issues
                 .FirstOrDefaultAsync(i => i.Id == issueId);
 
             if (issue == null)
             {
-                return (false, "Issue not found");
+                return (false, DomainErrors.IssueNotFound);
             }
 
             // Check if vote exists (for user-friendly error message)
@@ -1342,10 +1385,18 @@ public class IssueService(
             // Use execution strategy to wrap the transaction
             IExecutionStrategy strategy = context.Database.CreateExecutionStrategy();
 
-            var removedByThisRequest = await strategy.ExecuteAsync(async () =>
+            var removeResult = await strategy.ExecuteAsync(async () =>
             {
                 // Clear change tracker to ensure clean state on retry
                 context.ChangeTracker.Clear();
+
+                // Re-check IsDeleted inside the retry loop to close the TOCTOU window
+                bool isDeleted = await context.UserProfiles
+                    .IgnoreQueryFilters()
+                    .Where(u => u.Id == user.Id && u.IsDeleted)
+                    .AnyAsync();
+                if (isDeleted)
+                    return (removed: false, deleted: true);
 
                 await using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
 
@@ -1358,7 +1409,7 @@ public class IssueService(
                 if (rowsDeleted == 0)
                 {
                     await transaction.RollbackAsync();
-                    return false; // Idempotent success
+                    return (removed: false, deleted: false); // Idempotent success
                 }
 
                 // Use atomic database operations to prevent race conditions on vote counts
@@ -1369,15 +1420,16 @@ public class IssueService(
                     .ExecuteUpdateAsync(i => i.SetProperty(x => x.CommunityVotes, x => Math.Max(0, x.CommunityVotes - 1)));
 
                 // Decrement CommunityVotes on the issue author's profile (votes received)
+                // Guard against soft-deleted authors explicitly since ExecuteUpdateAsync bypasses global filters
                 await context.UserProfiles
-                    .Where(u => u.Id == issue.UserId)
+                    .Where(u => u.Id == issue.UserId && !u.IsDeleted)
                     .ExecuteUpdateAsync(u => u
                         .SetProperty(x => x.CommunityVotes, x => Math.Max(0, x.CommunityVotes - 1))
                         .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
 
                 // Decrement VotesGiven on the voter's profile
                 await context.UserProfiles
-                    .Where(u => u.Id == user.Id)
+                    .Where(u => u.Id == user.Id && !u.IsDeleted)
                     .ExecuteUpdateAsync(u => u
                         .SetProperty(x => x.VotesGiven, x => Math.Max(0, x.VotesGiven - 1))
                         .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
@@ -1389,10 +1441,13 @@ public class IssueService(
                     "issue_vote_removed");
 
                 await transaction.CommitAsync();
-                return true;
+                return (removed: true, deleted: false);
             });
 
-            if (removedByThisRequest)
+            if (removeResult.deleted)
+                return (false, DomainErrors.AccountDeleted);
+
+            if (removeResult.removed)
             {
                 logger.LogInformation(
                     "User {UserId} removed vote from issue {IssueId}, deducted {Points} points from author {AuthorId}",

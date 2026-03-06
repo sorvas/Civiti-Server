@@ -1,4 +1,5 @@
 using Civiti.Api.Infrastructure.Constants;
+using Civiti.Api.Infrastructure.Exceptions;
 using Civiti.Api.Infrastructure.Extensions;
 using Civiti.Api.Infrastructure.Filters;
 using Civiti.Api.Models.Domain;
@@ -93,8 +94,15 @@ public static class IssueEndpoints
             var supabaseUserId = httpContext.User.GetSupabaseUserId();
             if (!string.IsNullOrEmpty(supabaseUserId))
             {
-                UserProfileResponse? userProfile = await userService.GetUserProfileAsync(supabaseUserId);
-                currentUserId = userProfile?.Id;
+                try
+                {
+                    UserProfileResponse? userProfile = await userService.GetUserProfileAsync(supabaseUserId);
+                    currentUserId = userProfile?.Id;
+                }
+                catch (AccountDeletedException)
+                {
+                    // Deleted user with a still-valid JWT — treat as unauthenticated
+                }
             }
 
             PagedResult<IssueListResponse> result = await issueService.GetAllIssuesAsync(request, currentUserId);
@@ -117,8 +125,15 @@ public static class IssueEndpoints
             var supabaseUserId = httpContext.User.GetSupabaseUserId();
             if (!string.IsNullOrEmpty(supabaseUserId))
             {
-                UserProfileResponse? userProfile = await userService.GetUserProfileAsync(supabaseUserId);
-                currentUserId = userProfile?.Id;
+                try
+                {
+                    UserProfileResponse? userProfile = await userService.GetUserProfileAsync(supabaseUserId);
+                    currentUserId = userProfile?.Id;
+                }
+                catch (AccountDeletedException)
+                {
+                    // Deleted user with a still-valid JWT — treat as unauthenticated
+                }
             }
 
             IssueDetailResponse? issue = await issueService.GetIssueByIdAsync(id, currentUserId);
@@ -134,7 +149,7 @@ public static class IssueEndpoints
         .Produces(404);
 
         // POST /api/issues
-        group.MapPost("/", [Authorize] async Task<Results<Created<CreateIssueResponse>, BadRequest<string>, UnauthorizedHttpResult>> (
+        group.MapPost("/", [Authorize] async Task<Results<Created<CreateIssueResponse>, BadRequest<string>, UnauthorizedHttpResult, ProblemHttpResult>> (
             IIssueService issueService,
             CreateIssueRequest request,
             HttpContext httpContext) =>
@@ -151,6 +166,20 @@ public static class IssueEndpoints
                 CreateIssueResponse result = await issueService.CreateIssueAsync(request, supabaseUserId);
                 return TypedResults.Created($"/api/issues/{result.Id}", result);
             }
+            catch (AccountDeletedException)
+            {
+                return TypedResults.Problem(
+                    detail: DomainErrors.AccountDeleted,
+                    statusCode: StatusCodes.Status403Forbidden,
+                    title: "Account Deleted");
+            }
+            catch (InvalidOperationException ex) when (ex.Message is DomainErrors.UserNotFound or DomainErrors.UserProfileNotFound)
+            {
+                return TypedResults.Problem(
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status404NotFound,
+                    title: "User Not Found");
+            }
             catch (InvalidOperationException ex)
             {
                 return TypedResults.BadRequest(ex.Message);
@@ -160,9 +189,13 @@ public static class IssueEndpoints
         .WithSummary("Create a new issue (requires authentication)")
         .WithDescription("Creates a new civic issue report. The issue will be placed in pending status and requires admin approval before becoming publicly visible. Users earn gamification points for creating issues. Rate limited to 10 issues per hour per user to prevent spam.")
         .AddEndpointFilter<ValidationFilter<CreateIssueRequest>>()
+        // Disable ASP.NET Core 9's built-in model validation to avoid double-validation with our FluentValidation filter above
+        .DisableValidation()
         .Produces<CreateIssueResponse>(201)
         .Produces(400)
         .Produces(401)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(404)
         .Produces(429);
 
         // POST /api/issues/{id}/email-sent
@@ -181,7 +214,7 @@ public static class IssueEndpoints
             {
                 return error switch
                 {
-                    "Issue not found" => TypedResults.NotFound(),
+                    DomainErrors.IssueNotFound => TypedResults.NotFound(),
                     IssueService.RateLimitedError => TypedResults.StatusCode(429),
                     _ => TypedResults.BadRequest(error)
                 };
@@ -198,7 +231,7 @@ public static class IssueEndpoints
         .Produces(429);
 
         // POST /api/issues/enhance-text
-        group.MapPost(ApiRoutes.Issues.EnhanceText, [Authorize] async Task<Results<Ok<EnhanceTextResponse>, BadRequest<string>, UnauthorizedHttpResult, StatusCodeHttpResult>> (
+        group.MapPost(ApiRoutes.Issues.EnhanceText, [Authorize] async Task<Results<Ok<EnhanceTextResponse>, BadRequest<string>, UnauthorizedHttpResult, ProblemHttpResult, StatusCodeHttpResult>> (
             IClaudeEnhancementService enhancementService,
             IUserService userService,
             EnhanceTextRequest request,
@@ -212,7 +245,19 @@ public static class IssueEndpoints
             }
 
             // Get internal user ID for rate limiting
-            UserProfileResponse? userProfile = await userService.GetUserProfileAsync(supabaseUserId);
+            UserProfileResponse? userProfile;
+            try
+            {
+                userProfile = await userService.GetUserProfileAsync(supabaseUserId);
+            }
+            catch (AccountDeletedException)
+            {
+                return TypedResults.Problem(
+                    detail: DomainErrors.AccountDeleted,
+                    statusCode: StatusCodes.Status403Forbidden,
+                    title: "Account Deleted");
+            }
+
             if (userProfile == null)
             {
                 return TypedResults.Unauthorized();
@@ -234,6 +279,7 @@ public static class IssueEndpoints
         .Produces<EnhanceTextResponse>()
         .Produces(400)
         .Produces(401)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(429);
 
         // GET /api/issues/{id}/poster
@@ -260,7 +306,7 @@ public static class IssueEndpoints
         .Produces(404);
 
         // POST /api/issues/{id}/vote
-        group.MapPost(ApiRoutes.Issues.Vote, [Authorize] async Task<Results<Ok, BadRequest<string>, NotFound, UnauthorizedHttpResult>> (
+        group.MapPost(ApiRoutes.Issues.Vote, [Authorize] async Task<Results<Ok, BadRequest<string>, NotFound, UnauthorizedHttpResult, ProblemHttpResult>> (
             IIssueService issueService,
             HttpContext httpContext,
             Guid id) =>
@@ -278,7 +324,12 @@ public static class IssueEndpoints
             {
                 return error switch
                 {
-                    "Issue not found" => TypedResults.NotFound(),
+                    DomainErrors.IssueNotFound => TypedResults.NotFound(),
+                    DomainErrors.UserNotFound or DomainErrors.UserProfileNotFound => TypedResults.NotFound(),
+                    DomainErrors.AccountDeleted => TypedResults.Problem(
+                        detail: DomainErrors.AccountDeleted,
+                        statusCode: StatusCodes.Status403Forbidden,
+                        title: "Account Deleted"),
                     _ => TypedResults.BadRequest(error)
                 };
             }
@@ -291,10 +342,11 @@ public static class IssueEndpoints
         .Produces(200)
         .Produces(400)
         .Produces(401)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(404);
 
         // DELETE /api/issues/{id}/vote
-        group.MapDelete(ApiRoutes.Issues.Vote, [Authorize] async Task<Results<Ok, BadRequest<string>, NotFound, UnauthorizedHttpResult>> (
+        group.MapDelete(ApiRoutes.Issues.Vote, [Authorize] async Task<Results<Ok, BadRequest<string>, NotFound, UnauthorizedHttpResult, ProblemHttpResult>> (
             IIssueService issueService,
             HttpContext httpContext,
             Guid id) =>
@@ -312,7 +364,12 @@ public static class IssueEndpoints
             {
                 return error switch
                 {
-                    "Issue not found" => TypedResults.NotFound(),
+                    DomainErrors.IssueNotFound => TypedResults.NotFound(),
+                    DomainErrors.UserNotFound or DomainErrors.UserProfileNotFound => TypedResults.NotFound(),
+                    DomainErrors.AccountDeleted => TypedResults.Problem(
+                        detail: DomainErrors.AccountDeleted,
+                        statusCode: StatusCodes.Status403Forbidden,
+                        title: "Account Deleted"),
                     _ => TypedResults.BadRequest(error)
                 };
             }
@@ -325,6 +382,7 @@ public static class IssueEndpoints
         .Produces(200)
         .Produces(400)
         .Produces(401)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(404);
     }
 }
