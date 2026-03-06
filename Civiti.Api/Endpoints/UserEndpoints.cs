@@ -243,9 +243,15 @@ public static class UserEndpoints
 
             try
             {
-                var deleted = await userService.DeleteUserAsync(supabaseUserId);
+                var result = await userService.DeleteUserAsync(supabaseUserId);
 
-                return !deleted ? Results.NotFound(new { error = DomainErrors.UserNotFound }) : Results.NoContent();
+                return result switch
+                {
+                    DeleteUserResult.NotFound => Results.NotFound(new { error = DomainErrors.UserNotFound }),
+                    DeleteUserResult.Deleted => Results.NoContent(),
+                    DeleteUserResult.AlreadyDeleted => Results.NoContent(),
+                    _ => Results.NoContent()
+                };
             }
             catch (InvalidOperationException)
             {

@@ -569,7 +569,7 @@ public class UserService(
         }
     }
 
-    public async Task<bool> DeleteUserAsync(string supabaseUserId)
+    public async Task<DeleteUserResult> DeleteUserAsync(string supabaseUserId)
     {
         try
         {
@@ -633,7 +633,7 @@ public class UserService(
 
             // User was not found in the database
             if (deletedUserId == null && !alreadyDeleted)
-                return false;
+                return DeleteUserResult.NotFound;
 
             // 2. Revoke Supabase auth AFTER the local save succeeds (or was already done).
             //    If this fails, PII is already scrubbed and the soft-delete flag
@@ -644,20 +644,19 @@ public class UserService(
                 logger.LogInformation(
                     "Retried Supabase auth cleanup for previously-deleted user {SupabaseUserId}: auth {AuthResult}",
                     supabaseUserId, supabaseDeleted ? "revoked" : "still pending");
+                return DeleteUserResult.AlreadyDeleted;
             }
-            else
-            {
-                if (!supabaseDeleted)
-                {
-                    logger.LogWarning(
-                        "Supabase auth deletion failed for user {UserId} after local soft-delete. " +
-                        "Auth record requires manual cleanup.", deletedUserId);
-                }
 
-                logger.LogInformation("Soft deleted user {UserId} (Supabase auth removed: {SupabaseDeleted})",
-                    deletedUserId, supabaseDeleted);
+            if (!supabaseDeleted)
+            {
+                logger.LogWarning(
+                    "Supabase auth deletion failed for user {UserId} after local soft-delete. " +
+                    "Auth record requires manual cleanup.", deletedUserId);
             }
-            return true;
+
+            logger.LogInformation("Soft deleted user {UserId} (Supabase auth removed: {SupabaseDeleted})",
+                deletedUserId, supabaseDeleted);
+            return DeleteUserResult.Deleted;
         }
         catch (Exception ex)
         {

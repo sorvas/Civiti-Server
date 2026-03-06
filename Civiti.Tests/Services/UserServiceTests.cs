@@ -171,7 +171,7 @@ public class UserServiceTests : IDisposable
         var svc = CreateService();
         var result = await svc.DeleteUserAsync("delete_me");
 
-        result.Should().BeTrue();
+        result.Should().Be(DeleteUserResult.Deleted);
 
         using var verifyCtx = _dbFactory.CreateContext();
         var deleted = await verifyCtx.UserProfiles
@@ -237,7 +237,7 @@ public class UserServiceTests : IDisposable
         var svc = CreateService();
         var result = await svc.DeleteUserAsync("supa_fail_delete");
 
-        result.Should().BeTrue();
+        result.Should().Be(DeleteUserResult.Deleted);
 
         using var verifyCtx = _dbFactory.CreateContext();
         var deleted = await verifyCtx.UserProfiles
@@ -248,15 +248,15 @@ public class UserServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task DeleteUser_Should_Return_False_When_Not_Found()
+    public async Task DeleteUser_Should_Return_NotFound_When_Not_Found()
     {
         var svc = CreateService();
         var result = await svc.DeleteUserAsync("nonexistent_user");
-        result.Should().BeFalse();
+        result.Should().Be(DeleteUserResult.NotFound);
     }
 
     [Fact]
-    public async Task DeleteUser_Should_Return_True_And_Retry_Supabase_When_Already_Deleted()
+    public async Task DeleteUser_Should_Return_AlreadyDeleted_And_Retry_Supabase_When_Already_Deleted()
     {
         var user = TestDataBuilder.CreateUser(supabaseUserId: "already_deleted");
         user.IsDeleted = true;
@@ -272,7 +272,7 @@ public class UserServiceTests : IDisposable
         var svc = CreateService();
         var result = await svc.DeleteUserAsync("already_deleted");
 
-        result.Should().BeTrue();
+        result.Should().Be(DeleteUserResult.AlreadyDeleted);
         _supabaseService.Verify(s => s.DeleteAuthUserAsync("already_deleted"), Times.Once);
     }
 
