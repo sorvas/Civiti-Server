@@ -421,7 +421,10 @@ Channel<PushNotificationMessage> pushChannel = Channel.CreateBounded<PushNotific
 builder.Services.AddSingleton(pushChannel.Reader);
 builder.Services.AddSingleton(pushChannel.Writer);
 
-builder.Services.AddHttpClient("ExpoPush");
+builder.Services.AddHttpClient("ExpoPush", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+});
 builder.Services.AddHostedService<PushNotificationSenderBackgroundService>();
 
 // Custom services

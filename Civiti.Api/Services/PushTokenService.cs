@@ -27,6 +27,8 @@ public class PushTokenService(
         }
     }
 
+    private const int MaxTokensPerUser = 10;
+
     private async Task UpsertTokenAsync(Guid userId, string token, PushTokenPlatform platform)
     {
         PushToken? existing = await context.PushTokens
@@ -42,6 +44,7 @@ public class PushTokenService(
 
             existing.Platform = platform;
             existing.UpdatedAt = DateTime.UtcNow;
+            await context.SaveChangesAsync();
         }
         else
         {
@@ -51,9 +54,23 @@ public class PushTokenService(
                 Token = token,
                 Platform = platform
             });
-        }
+            await context.SaveChangesAsync();
 
-        await context.SaveChangesAsync();
+            // Enforce per-user token cap by removing the oldest excess tokens
+            var excessTokenIds = await context.PushTokens
+                .Where(pt => pt.UserId == userId)
+                .OrderByDescending(pt => pt.UpdatedAt)
+                .Skip(MaxTokensPerUser)
+                .Select(pt => pt.Id)
+                .ToListAsync();
+
+            if (excessTokenIds.Count > 0)
+            {
+                await context.PushTokens
+                    .Where(pt => excessTokenIds.Contains(pt.Id))
+                    .ExecuteDeleteAsync();
+            }
+        }
     }
 
     public async Task DeregisterTokenAsync(Guid userId, string token)

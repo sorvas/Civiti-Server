@@ -101,8 +101,17 @@ public class PushNotificationSenderBackgroundService(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to send push batch {BatchIndex} for user {UserId} ({TokenCount} tokens)",
-                    i / config.BatchSize, message.UserId, batch.Count);
+                logger.LogWarning(ex, "First attempt failed for push batch {BatchIndex}, retrying once...",
+                    i / config.BatchSize);
+                try
+                {
+                    await SendBatchAsync(batch, ct);
+                }
+                catch (Exception retryEx)
+                {
+                    logger.LogError(retryEx, "Failed to send push batch {BatchIndex} for user {UserId} ({TokenCount} tokens)",
+                        i / config.BatchSize, message.UserId, batch.Count);
+                }
             }
         }
     }
