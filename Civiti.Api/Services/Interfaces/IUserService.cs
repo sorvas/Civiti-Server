@@ -16,5 +16,5 @@ public interface IUserService
     Task<UserProfileResponse> CreateUserProfileAsync(CreateUserProfileRequest request, string supabaseUserId, string email);
     Task<UserProfileResponse> UpdateUserProfileAsync(string supabaseUserId, UpdateUserProfileRequest request);
     Task<LeaderboardResponse> GetLeaderboardAsync(int page = 1, int pageSize = 50, string period = "all");
-    Task<DeleteUserResult> DeleteUserAsync(string supabaseUserId);
+    Task<DeleteUserResult> DeleteUserAsync(string supabaseUserId, CancellationToken ct = default);
 }
