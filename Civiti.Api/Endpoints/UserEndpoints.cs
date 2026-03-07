@@ -279,7 +279,8 @@ public static class UserEndpoints
             DeleteAccountRequest request,
             HttpContext context,
             IUserService userService,
-            IMemoryCache memoryCache) =>
+            IMemoryCache memoryCache,
+            CancellationToken ct) =>
         {
             var supabaseUserId = context.User.GetSupabaseUserId();
             if (string.IsNullOrEmpty(supabaseUserId))
@@ -294,7 +295,7 @@ public static class UserEndpoints
 
             try
             {
-                var result = await userService.DeleteUserAsync(supabaseUserId);
+                var result = await userService.DeleteUserAsync(supabaseUserId, ct);
 
                 return result switch
                 {

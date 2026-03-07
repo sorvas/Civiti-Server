@@ -119,10 +119,30 @@ public class NotificationService(
     {
         Issue? issue = await context.Issues
             .AsNoTracking()
+            .Include(i => i.User)
             .FirstOrDefaultAsync(i => i.Id == issueId, cancellationToken);
 
         if (issue == null) return;
 
+        // Notify author (mirrors NotifyIssueResolvedAsync)
+        if (issue.User != null)
+        {
+            EnqueuePush(issue.User, "Problemă anulată", $"\"{issue.Title}\" a fost anulată.",
+                new PushRoute("issue", issue.Id.ToString()));
+
+            if (issue.User.IssueUpdatesEnabled)
+            {
+                await EnqueueEmailAsync(EmailNotificationType.IssueCancelled, issue.User.Email, new Dictionary<string, string>
+                {
+                    [UserName] = issue.User.DisplayName,
+                    [IssueTitle] = issue.Title,
+                    [CtaUrl] = $"{config.FrontendBaseUrl}/issue/{issue.Id}",
+                    [CtaText] = "Vezi problema"
+                });
+            }
+        }
+
+        // Notify voters and commenters (distinct, excluding author)
         await NotifyIssueFollowersAsync(issueId, issue.Title, issue.UserId,
             EmailNotificationType.IssueCancelled, cancellationToken);
     }
