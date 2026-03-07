@@ -81,12 +81,11 @@ public class PushNotificationSenderBackgroundServiceTests : IDisposable
         if (expectedCalls > 0)
             await handler.WaitForCallsAsync(expectedCalls, TimeSpan.FromSeconds(3));
 
-        // Await ExecuteTask directly — the service breaks out of its loop when the
-        // channel completes, so this resolves once all processing finishes.
-        // StopAsync cannot be used because it cancels the stopping token first,
-        // which aborts in-flight DB operations inside ProcessMessageAsync.
-        if (service.ExecuteTask is not null)
-            await service.ExecuteTask.WaitAsync(TimeSpan.FromSeconds(5));
+        // The service exits its loop when the channel completes, so ExecuteTask
+        // resolves after all in-flight processing (including post-HTTP DB work)
+        // finishes — no cancellation needed, no timing assumptions.
+        service.ExecuteTask.Should().NotBeNull("service should have been started");
+        await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
 
         return handler.CallCount;
     }
