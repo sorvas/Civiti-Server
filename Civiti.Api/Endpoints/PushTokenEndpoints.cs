@@ -39,6 +39,10 @@ public static class PushTokenEndpoints
                 await pushTokenService.RegisterTokenAsync(userId.Value, request.Token, request.Platform);
                 return Results.Ok(new { success = true });
             }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
             catch (AccountDeletedException)
             {
                 return Results.Problem(
@@ -81,6 +85,10 @@ public static class PushTokenEndpoints
 
                 await pushTokenService.DeregisterTokenAsync(userId.Value, request.Token);
                 return Results.Ok(new { success = true });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
             }
             catch (AccountDeletedException)
             {
