@@ -592,7 +592,7 @@ public class UserService(
         }
     }
 
-    public async Task<DeleteUserResult> DeleteUserAsync(string supabaseUserId, CancellationToken ct = default)
+    public async Task<DeleteUserResult> DeleteUserAsync(string supabaseUserId, CancellationToken _ = default)
     {
         try
         {
@@ -670,7 +670,7 @@ public class UserService(
                 await context.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
                 deletedUserId = user.Id;
-            }, ct);
+            }, CancellationToken.None);
 
             // User was not found in the database
             if (deletedUserId == null && !alreadyDeleted)
@@ -699,6 +699,7 @@ public class UserService(
                 deletedUserId, supabaseDeleted);
             return DeleteUserResult.Deleted;
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             logger.LogError(ex, "Error deleting user for Supabase ID: {SupabaseUserId}", supabaseUserId);
