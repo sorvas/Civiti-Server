@@ -31,7 +31,7 @@ public class NotificationService(
 
     public Task NotifyIssueSubmittedAsync(Issue issue, UserProfile author)
     {
-        EnqueuePush(author, "Problemă trimisă", $"\"{issue.Title}\" a fost trimisă spre aprobare.",
+        EnqueuePush(author, "Problemă trimisă", $"\"{Truncate(issue.Title, 40)}\" a fost trimisă spre aprobare.",
             new PushRoute("issue", issue.Id.ToString()));
 
         if (!author.IssueUpdatesEnabled) return Task.CompletedTask;
@@ -47,7 +47,7 @@ public class NotificationService(
 
     public Task NotifyIssueApprovedAsync(Issue issue, UserProfile author)
     {
-        EnqueuePush(author, "Problemă aprobată", $"\"{issue.Title}\" a fost aprobată și este acum publică.",
+        EnqueuePush(author, "Problemă aprobată", $"\"{Truncate(issue.Title, 40)}\" a fost aprobată și este acum publică.",
             new PushRoute("issue", issue.Id.ToString()));
 
         if (!author.IssueUpdatesEnabled) return Task.CompletedTask;
@@ -63,7 +63,7 @@ public class NotificationService(
 
     public Task NotifyIssueRejectedAsync(Issue issue, UserProfile author, string reason)
     {
-        EnqueuePush(author, "Problemă respinsă", $"\"{issue.Title}\" a fost respinsă: {Truncate(reason, 100)}",
+        EnqueuePush(author, "Problemă respinsă", $"\"{Truncate(issue.Title, 40)}\" a fost respinsă: {Truncate(reason, 100)}",
             new PushRoute("issue", issue.Id.ToString()));
 
         if (!author.IssueUpdatesEnabled) return Task.CompletedTask;
@@ -78,7 +78,7 @@ public class NotificationService(
 
     public Task NotifyChangesRequestedAsync(Issue issue, UserProfile author, string notes)
     {
-        EnqueuePush(author, "Modificări necesare", $"\"{issue.Title}\" necesită modificări.",
+        EnqueuePush(author, "Modificări necesare", $"\"{Truncate(issue.Title, 40)}\" necesită modificări.",
             new PushRoute("issue", issue.Id.ToString()));
 
         if (!author.IssueUpdatesEnabled) return Task.CompletedTask;
@@ -96,7 +96,7 @@ public class NotificationService(
     public async Task NotifyIssueResolvedAsync(Issue issue, UserProfile author, CancellationToken cancellationToken = default)
     {
         // Notify author
-        EnqueuePush(author, "Problemă rezolvată", $"\"{issue.Title}\" a fost marcată ca rezolvată!",
+        EnqueuePush(author, "Problemă rezolvată", $"\"{Truncate(issue.Title, 40)}\" a fost marcată ca rezolvată!",
             new PushRoute("issue", issue.Id.ToString()));
 
         if (author.IssueUpdatesEnabled)
@@ -119,10 +119,40 @@ public class NotificationService(
     {
         Issue? issue = await context.Issues
             .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Include(i => i.User)
             .FirstOrDefaultAsync(i => i.Id == issueId, cancellationToken);
 
         if (issue == null) return;
 
+        // Notify author (mirrors NotifyIssueResolvedAsync)
+        if (issue.User == null)
+        {
+            logger.LogDebug("Author not found for cancelled issue {IssueId} — skipping author notification", issueId);
+        }
+        else if (issue.User.IsDeleted)
+        {
+            logger.LogDebug("Author {UserId} is soft-deleted for cancelled issue {IssueId} — skipping author notification",
+                issue.UserId, issueId);
+        }
+        else
+        {
+            EnqueuePush(issue.User, "Problemă anulată", $"\"{Truncate(issue.Title, 40)}\" a fost anulată.",
+                new PushRoute("issue", issue.Id.ToString()));
+
+            if (issue.User.IssueUpdatesEnabled)
+            {
+                await EnqueueEmailAsync(EmailNotificationType.IssueCancelled, issue.User.Email, new Dictionary<string, string>
+                {
+                    [UserName] = issue.User.DisplayName,
+                    [IssueTitle] = issue.Title,
+                    [CtaUrl] = $"{config.FrontendBaseUrl}/issue/{issue.Id}",
+                    [CtaText] = "Vezi problema"
+                });
+            }
+        }
+
+        // Notify voters and commenters (distinct, excluding author)
         await NotifyIssueFollowersAsync(issueId, issue.Title, issue.UserId,
             EmailNotificationType.IssueCancelled, cancellationToken);
     }

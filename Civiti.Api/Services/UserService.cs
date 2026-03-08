@@ -603,7 +603,7 @@ public class UserService(
             bool alreadyDeleted = false;
             Guid? deletedUserId = null;
 
-            await strategy.ExecuteAsync(async () =>
+            await strategy.ExecuteAsync(async (cancellationToken) =>
             {
                 // Reset closure state on each retry to prevent stale flags from a
                 // previous attempt (e.g. SaveChangesAsync succeeded but a later
@@ -617,7 +617,7 @@ public class UserService(
 
                 UserProfile? user = await context.UserProfiles
                     .IgnoreQueryFilters()
-                    .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId);
+                    .FirstOrDefaultAsync(u => u.SupabaseUserId == supabaseUserId, cancellationToken);
 
                 if (user == null)
                 {
@@ -634,7 +634,7 @@ public class UserService(
 
                 // Explicit transaction ensures all PII scrub fields are committed atomically.
                 // Without this, a failure mid-SaveChangesAsync could leave partial PII intact.
-                await using var transaction = await context.Database.BeginTransactionAsync();
+                await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
 
                 // 1. Anonymize PII and soft-delete locally FIRST so the DB is always consistent.
                 //    Keep the original SupabaseUserId so the global query filter + the
@@ -660,17 +660,17 @@ public class UserService(
                 // Remove all push tokens for this user
                 await context.PushTokens
                     .Where(pt => pt.UserId == user.Id)
-                    .ExecuteDeleteAsync();
+                    .ExecuteDeleteAsync(cancellationToken);
 
                 // Mark as deleted
                 user.IsDeleted = true;
                 user.DeletedAt = DateTime.UtcNow;
                 user.UpdatedAt = DateTime.UtcNow;
 
-                await context.SaveChangesAsync();
-                await transaction.CommitAsync();
+                await context.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
                 deletedUserId = user.Id;
-            });
+            }, CancellationToken.None);
 
             // User was not found in the database
             if (deletedUserId == null && !alreadyDeleted)
