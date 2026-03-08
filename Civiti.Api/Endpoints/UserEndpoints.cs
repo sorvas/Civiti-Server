@@ -279,8 +279,7 @@ public static class UserEndpoints
             DeleteAccountRequest request,
             HttpContext context,
             IUserService userService,
-            IMemoryCache memoryCache,
-            CancellationToken ct) =>
+            IMemoryCache memoryCache) =>
         {
             var supabaseUserId = context.User.GetSupabaseUserId();
             if (string.IsNullOrEmpty(supabaseUserId))
