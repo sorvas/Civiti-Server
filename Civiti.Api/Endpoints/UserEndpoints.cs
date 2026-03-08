@@ -295,7 +295,7 @@ public static class UserEndpoints
 
             try
             {
-                var result = await userService.DeleteUserAsync(supabaseUserId, ct);
+                var result = await userService.DeleteUserAsync(supabaseUserId);
 
                 return result switch
                 {

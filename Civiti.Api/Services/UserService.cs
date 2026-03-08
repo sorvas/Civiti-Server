@@ -592,7 +592,7 @@ public class UserService(
         }
     }
 
-    public async Task<DeleteUserResult> DeleteUserAsync(string supabaseUserId, CancellationToken _ = default)
+    public async Task<DeleteUserResult> DeleteUserAsync(string supabaseUserId)
     {
         try
         {
@@ -699,7 +699,6 @@ public class UserService(
                 deletedUserId, supabaseDeleted);
             return DeleteUserResult.Deleted;
         }
-        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             logger.LogError(ex, "Error deleting user for Supabase ID: {SupabaseUserId}", supabaseUserId);
