@@ -110,7 +110,7 @@ public class PushNotificationSenderBackgroundService(
             {
                 staleTokens.AddRange(await SendBatchAsync(client, batch, ct));
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogWarning(ex, "First attempt failed for push batch {BatchIndex}, retrying once...",
                     i / config.BatchSize);
@@ -118,7 +118,7 @@ public class PushNotificationSenderBackgroundService(
                 {
                     staleTokens.AddRange(await SendBatchAsync(client, batch, ct));
                 }
-                catch (Exception retryEx)
+                catch (Exception retryEx) when (retryEx is not OperationCanceledException)
                 {
                     logger.LogError(retryEx, "Failed to send push batch {BatchIndex} for user {UserId} ({TokenCount} tokens)",
                         i / config.BatchSize, message.UserId, batch.Count);
@@ -178,9 +178,10 @@ public class PushNotificationSenderBackgroundService(
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
-            logger.LogError("Expo push API returned {StatusCode}: {Body}", response.StatusCode, body);
+            var truncatedBody = body.Length > 500 ? body[..500] + "…" : body;
+            logger.LogError("Expo push API returned {StatusCode}: {Body}", response.StatusCode, truncatedBody);
             throw new HttpRequestException(
-                $"Expo push API returned {response.StatusCode}: {body}");
+                $"Expo push API returned {response.StatusCode}: {truncatedBody}");
         }
 
         // Parse response to collect stale tokens
