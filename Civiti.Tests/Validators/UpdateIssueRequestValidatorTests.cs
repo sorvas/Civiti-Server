@@ -19,7 +19,7 @@ public class UpdateIssueRequestValidatorTests
     {
         var request = new UpdateIssueRequest { PhotoUrls = null };
 
-        var isValid = TryValidate(request, out var results);
+        _ = TryValidate(request, out var results);
 
         results.Should().NotContain(r => r.MemberNames.Contains(nameof(UpdateIssueRequest.PhotoUrls)));
     }
@@ -32,7 +32,7 @@ public class UpdateIssueRequestValidatorTests
             PhotoUrls = ["https://example.com/photo1.jpg", "https://example.com/photo2.jpg"]
         };
 
-        var isValid = TryValidate(request, out var results);
+        _ = TryValidate(request, out var results);
 
         results.Should().NotContain(r => r.MemberNames.Contains(nameof(UpdateIssueRequest.PhotoUrls)));
     }
@@ -47,7 +47,7 @@ public class UpdateIssueRequestValidatorTests
                 .ToList()
         };
 
-        var isValid = TryValidate(request, out var results);
+        _ = TryValidate(request, out var results);
 
         results.Should().Contain(r =>
             r.MemberNames.Contains(nameof(UpdateIssueRequest.PhotoUrls)) &&

@@ -19,7 +19,7 @@ public class CreateIssueRequestValidatorTests
     {
         var request = new CreateIssueRequest { PhotoUrls = null };
 
-        var isValid = TryValidate(request, out var results);
+        _ = TryValidate(request, out var results);
 
         results.Should().NotContain(r => r.MemberNames.Contains(nameof(CreateIssueRequest.PhotoUrls)));
     }
@@ -29,7 +29,7 @@ public class CreateIssueRequestValidatorTests
     {
         var request = new CreateIssueRequest { PhotoUrls = [] };
 
-        var isValid = TryValidate(request, out var results);
+        _ = TryValidate(request, out var results);
 
         results.Should().NotContain(r => r.MemberNames.Contains(nameof(CreateIssueRequest.PhotoUrls)));
     }
@@ -44,7 +44,7 @@ public class CreateIssueRequestValidatorTests
                 .ToList()
         };
 
-        var isValid = TryValidate(request, out var results);
+        _ = TryValidate(request, out var results);
 
         results.Should().NotContain(r => r.MemberNames.Contains(nameof(CreateIssueRequest.PhotoUrls)));
     }
@@ -59,7 +59,7 @@ public class CreateIssueRequestValidatorTests
                 .ToList()
         };
 
-        var isValid = TryValidate(request, out var results);
+        _ = TryValidate(request, out var results);
 
         results.Should().Contain(r =>
             r.MemberNames.Contains(nameof(CreateIssueRequest.PhotoUrls)) &&
