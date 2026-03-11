@@ -1,23 +1,27 @@
+using System.ComponentModel.DataAnnotations;
 using Civiti.Api.Infrastructure.Constants;
 using Civiti.Api.Models.Requests.Issues;
-using Civiti.Api.Validators;
 using FluentAssertions;
-using FluentValidation.TestHelper;
 
 namespace Civiti.Tests.Validators;
 
 public class CreateIssueRequestValidatorTests
 {
-    private readonly CreateIssueRequestValidator _validator = new();
+    private static bool TryValidate(CreateIssueRequest request, out List<ValidationResult> results)
+    {
+        results = [];
+        var context = new ValidationContext(request);
+        return Validator.TryValidateObject(request, context, results, validateAllProperties: true);
+    }
 
     [Fact]
     public void Should_Pass_When_PhotoUrls_Is_Null()
     {
         var request = new CreateIssueRequest { PhotoUrls = null };
 
-        var result = _validator.TestValidate(request);
+        var isValid = TryValidate(request, out var results);
 
-        result.ShouldNotHaveValidationErrorFor(x => x.PhotoUrls);
+        results.Should().NotContain(r => r.MemberNames.Contains(nameof(CreateIssueRequest.PhotoUrls)));
     }
 
     [Fact]
@@ -25,9 +29,9 @@ public class CreateIssueRequestValidatorTests
     {
         var request = new CreateIssueRequest { PhotoUrls = [] };
 
-        var result = _validator.TestValidate(request);
+        var isValid = TryValidate(request, out var results);
 
-        result.ShouldNotHaveValidationErrorFor(x => x.PhotoUrls);
+        results.Should().NotContain(r => r.MemberNames.Contains(nameof(CreateIssueRequest.PhotoUrls)));
     }
 
     [Fact]
@@ -40,9 +44,9 @@ public class CreateIssueRequestValidatorTests
                 .ToList()
         };
 
-        var result = _validator.TestValidate(request);
+        var isValid = TryValidate(request, out var results);
 
-        result.ShouldNotHaveValidationErrorFor(x => x.PhotoUrls);
+        results.Should().NotContain(r => r.MemberNames.Contains(nameof(CreateIssueRequest.PhotoUrls)));
     }
 
     [Fact]
@@ -55,9 +59,10 @@ public class CreateIssueRequestValidatorTests
                 .ToList()
         };
 
-        var result = _validator.TestValidate(request);
+        var isValid = TryValidate(request, out var results);
 
-        result.ShouldHaveValidationErrorFor(x => x.PhotoUrls)
-            .WithErrorMessage($"A maximum of {IssueValidationLimits.MaxPhotoCount} photos are allowed.");
+        results.Should().Contain(r =>
+            r.MemberNames.Contains(nameof(CreateIssueRequest.PhotoUrls)) &&
+            r.ErrorMessage!.Contains($"A maximum of {IssueValidationLimits.MaxPhotoCount} photos are allowed."));
     }
 }
