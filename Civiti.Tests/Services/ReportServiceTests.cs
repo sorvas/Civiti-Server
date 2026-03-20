@@ -165,6 +165,28 @@ public class ReportServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ReportIssue_Should_Fail_For_NonActive_Issue()
+    {
+        var reporter = TestDataBuilder.CreateUser();
+        var author = TestDataBuilder.CreateUser();
+        var issue = TestDataBuilder.CreateIssue(userId: author.Id);
+        issue.Status = IssueStatus.Draft;
+
+        using (var ctx = _dbFactory.CreateContext())
+        {
+            ctx.UserProfiles.AddRange(reporter, author);
+            ctx.Issues.Add(issue);
+            await ctx.SaveChangesAsync();
+        }
+
+        var svc = CreateService();
+        var (success, _, error) = await svc.ReportIssueAsync(issue.Id, ValidRequest(), reporter.SupabaseUserId);
+
+        success.Should().BeFalse();
+        error.Should().Be(DomainErrors.IssueNotReportable);
+    }
+
+    [Fact]
     public async Task ReportIssue_Should_Throw_For_Deleted_Account()
     {
         var user = TestDataBuilder.CreateUser();

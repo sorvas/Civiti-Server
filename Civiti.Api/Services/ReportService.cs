@@ -124,7 +124,8 @@ public class ReportService(
         {
             throw;
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (
+            ex.InnerException?.Message.Contains("23505") == true)
         {
             // Unique constraint violation from concurrent duplicate report
             return (false, null, DomainErrors.AlreadyReported);
@@ -241,7 +242,8 @@ public class ReportService(
         {
             throw;
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (
+            ex.InnerException?.Message.Contains("23505") == true)
         {
             // Unique constraint violation from concurrent duplicate report
             return (false, null, DomainErrors.AlreadyReported);

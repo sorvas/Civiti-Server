@@ -70,7 +70,8 @@ public class BlockService(
         {
             throw;
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (
+            ex.InnerException?.Message.Contains("23505") == true)
         {
             // Unique constraint violation from concurrent duplicate block request
             return (false, null, DomainErrors.AlreadyBlocked);
