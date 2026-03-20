@@ -154,11 +154,14 @@ public class ReportService(
                 throw new AccountDeletedException();
 
             Comment? comment = await context.Comments
-                .FirstOrDefaultAsync(c => c.Id == commentId && !c.IsDeleted
-                    && c.Issue.Status == IssueStatus.Active);
+                .Include(c => c.Issue)
+                .FirstOrDefaultAsync(c => c.Id == commentId && !c.IsDeleted);
 
             if (comment == null)
                 return (false, null, DomainErrors.CommentNotFound);
+
+            if (comment.Issue.Status != IssueStatus.Active)
+                return (false, null, DomainErrors.CommentNotReportable);
 
             if (comment.UserId == user.Id)
                 return (false, null, DomainErrors.CannotReportOwnContent);

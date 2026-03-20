@@ -106,6 +106,7 @@ public static class ReportEndpoints
                     return error switch
                     {
                         DomainErrors.CommentNotFound => Results.NotFound(new { error }),
+                        DomainErrors.CommentNotReportable => Results.BadRequest(new { error }),
                         DomainErrors.AlreadyReported => Results.Conflict(new { error }),
                         DomainErrors.ReportRateLimited => Results.Json(new { error }, statusCode: StatusCodes.Status429TooManyRequests),
                         DomainErrors.CannotReportOwnContent => Results.BadRequest(new { error }),
