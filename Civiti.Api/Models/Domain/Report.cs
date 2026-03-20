@@ -19,16 +19,16 @@ public class Report
 
 public enum ReportReason
 {
-    Spam,
-    Harassment,
-    Inappropriate,
-    Misinformation,
-    Other
+    Spam = 0,
+    Harassment = 1,
+    Inappropriate = 2,
+    Misinformation = 3,
+    Other = 4
 }
 
 public enum ReportStatus
 {
-    Pending,
-    Reviewed,
-    Dismissed
+    Pending = 0,
+    Reviewed = 1,
+    Dismissed = 2
 }

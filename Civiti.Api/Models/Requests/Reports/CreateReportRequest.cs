@@ -21,7 +21,7 @@ public class CreateReportRequest : IValidatableObject
             yield break;
         }
 
-        if (!Enum.TryParse<ReportReason>(Reason, ignoreCase: true, out _))
+        if (!Enum.TryParse<ReportReason>(Reason, ignoreCase: true, out var parsed) || !Enum.IsDefined(parsed))
         {
             yield return new ValidationResult(
                 $"Field 'reason' must be one of: {string.Join(", ", Enum.GetNames<ReportReason>())}.",
