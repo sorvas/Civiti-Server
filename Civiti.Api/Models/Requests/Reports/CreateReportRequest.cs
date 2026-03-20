@@ -29,5 +29,5 @@ public class CreateReportRequest : IValidatableObject
         }
     }
 
-    public ReportReason ParsedReason => Enum.Parse<ReportReason>(Reason!, ignoreCase: true);
+    public ReportReason ParsedReason => Enum.TryParse<ReportReason>(Reason, ignoreCase: true, out var r) ? r : default;
 }

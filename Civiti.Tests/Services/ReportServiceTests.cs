@@ -182,6 +182,31 @@ public class ReportServiceTests : IDisposable
             .Should().ThrowAsync<AccountDeletedException>();
     }
 
+    [Fact]
+    public async Task ReportIssue_Should_Return_RateLimited_After_5_Reports()
+    {
+        var reporter = TestDataBuilder.CreateUser();
+        var authors = Enumerable.Range(0, 6).Select(_ => TestDataBuilder.CreateUser()).ToList();
+        var issues = authors.Select(a => TestDataBuilder.CreateIssue(userId: a.Id)).ToList();
+
+        var existingReports = issues.Take(5).Select(i =>
+            TestDataBuilder.CreateReport(reporterId: reporter.Id, targetType: "Issue", targetId: i.Id)).ToList();
+
+        using (var ctx = _dbFactory.CreateContext())
+        {
+            ctx.UserProfiles.AddRange(new[] { reporter }.Concat(authors));
+            ctx.Issues.AddRange(issues);
+            ctx.Reports.AddRange(existingReports);
+            await ctx.SaveChangesAsync();
+        }
+
+        var svc = CreateService();
+        var (success, _, error) = await svc.ReportIssueAsync(issues[5].Id, ValidRequest(), reporter.SupabaseUserId);
+
+        success.Should().BeFalse();
+        error.Should().Be(DomainErrors.ReportRateLimited);
+    }
+
     // ── ReportCommentAsync ──
 
     [Fact]
