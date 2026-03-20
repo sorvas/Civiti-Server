@@ -1,3 +1,4 @@
+using Civiti.Api.Infrastructure.Constants;
 using Civiti.Api.Models.Domain;
 
 namespace Civiti.Tests.Helpers;
@@ -183,7 +184,7 @@ public static class TestDataBuilder
     public static Report CreateReport(
         Guid? id = null,
         Guid? reporterId = null,
-        string targetType = "Issue",
+        string targetType = ReportTargetTypes.Issue,
         Guid? targetId = null,
         ReportReason reason = ReportReason.Spam,
         DateTime? createdAt = null)

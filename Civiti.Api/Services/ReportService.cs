@@ -32,10 +32,13 @@ public class ReportService(
                 throw new AccountDeletedException();
 
             Issue? issue = await context.Issues
-                .FirstOrDefaultAsync(i => i.Id == issueId && i.Status == IssueStatus.Active);
+                .FirstOrDefaultAsync(i => i.Id == issueId);
 
             if (issue == null)
                 return (false, null, DomainErrors.IssueNotFound);
+
+            if (issue.Status != IssueStatus.Active)
+                return (false, null, DomainErrors.IssueNotReportable);
 
             if (issue.UserId == user.Id)
                 return (false, null, DomainErrors.CannotReportOwnContent);

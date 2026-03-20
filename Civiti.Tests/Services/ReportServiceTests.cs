@@ -56,7 +56,7 @@ public class ReportServiceTests : IDisposable
         using var verifyCtx = _dbFactory.CreateContext();
         var report = await verifyCtx.Reports.FindAsync(reportId!.Value);
         report.Should().NotBeNull();
-        report!.TargetType.Should().Be("Issue");
+        report!.TargetType.Should().Be(ReportTargetTypes.Issue);
         report.TargetId.Should().Be(issue.Id);
         report.Reason.Should().Be(ReportReason.Spam);
     }
@@ -69,7 +69,7 @@ public class ReportServiceTests : IDisposable
         var issue = TestDataBuilder.CreateIssue(userId: issueAuthor.Id);
         var existingReport = TestDataBuilder.CreateReport(
             reporterId: reporter.Id,
-            targetType: "Issue",
+            targetType: ReportTargetTypes.Issue,
             targetId: issue.Id);
 
         using (var ctx = _dbFactory.CreateContext())
@@ -123,8 +123,8 @@ public class ReportServiceTests : IDisposable
             ctx.UserProfiles.AddRange(issueAuthor, reporter1, reporter2);
             ctx.Issues.Add(issue);
             ctx.Reports.AddRange(
-                TestDataBuilder.CreateReport(reporterId: reporter1.Id, targetType: "Issue", targetId: issue.Id),
-                TestDataBuilder.CreateReport(reporterId: reporter2.Id, targetType: "Issue", targetId: issue.Id));
+                TestDataBuilder.CreateReport(reporterId: reporter1.Id, targetType: ReportTargetTypes.Issue, targetId: issue.Id),
+                TestDataBuilder.CreateReport(reporterId: reporter2.Id, targetType: ReportTargetTypes.Issue, targetId: issue.Id));
             await ctx.SaveChangesAsync();
         }
 
@@ -190,7 +190,7 @@ public class ReportServiceTests : IDisposable
         var issues = authors.Select(a => TestDataBuilder.CreateIssue(userId: a.Id)).ToList();
 
         var existingReports = issues.Take(5).Select(i =>
-            TestDataBuilder.CreateReport(reporterId: reporter.Id, targetType: "Issue", targetId: i.Id)).ToList();
+            TestDataBuilder.CreateReport(reporterId: reporter.Id, targetType: ReportTargetTypes.Issue, targetId: i.Id)).ToList();
 
         using (var ctx = _dbFactory.CreateContext())
         {
@@ -250,8 +250,8 @@ public class ReportServiceTests : IDisposable
             ctx.Issues.Add(issue);
             ctx.Comments.Add(comment);
             ctx.Reports.AddRange(
-                TestDataBuilder.CreateReport(reporterId: reporter1.Id, targetType: "Comment", targetId: comment.Id),
-                TestDataBuilder.CreateReport(reporterId: reporter2.Id, targetType: "Comment", targetId: comment.Id));
+                TestDataBuilder.CreateReport(reporterId: reporter1.Id, targetType: ReportTargetTypes.Comment, targetId: comment.Id),
+                TestDataBuilder.CreateReport(reporterId: reporter2.Id, targetType: ReportTargetTypes.Comment, targetId: comment.Id));
             await ctx.SaveChangesAsync();
         }
 
@@ -304,7 +304,7 @@ public class ReportServiceTests : IDisposable
         var issue = TestDataBuilder.CreateIssue(userId: commentAuthor.Id);
         var comment = TestDataBuilder.CreateComment(issueId: issue.Id, userId: commentAuthor.Id);
         var existingReport = TestDataBuilder.CreateReport(
-            reporterId: reporter.Id, targetType: "Comment", targetId: comment.Id);
+            reporterId: reporter.Id, targetType: ReportTargetTypes.Comment, targetId: comment.Id);
 
         using (var ctx = _dbFactory.CreateContext())
         {
@@ -356,7 +356,7 @@ public class ReportServiceTests : IDisposable
 
         var existingReports = comments.Take(5)
             .Select(c => TestDataBuilder.CreateReport(
-                reporterId: reporter.Id, targetType: "Comment", targetId: c.Id))
+                reporterId: reporter.Id, targetType: ReportTargetTypes.Comment, targetId: c.Id))
             .ToList();
 
         using (var ctx = _dbFactory.CreateContext())
