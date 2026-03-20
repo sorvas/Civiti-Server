@@ -32,7 +32,7 @@ public class ReportService(
                 throw new AccountDeletedException();
 
             Issue? issue = await context.Issues
-                .FirstOrDefaultAsync(i => i.Id == issueId);
+                .FirstOrDefaultAsync(i => i.Id == issueId && i.Status == IssueStatus.Active);
 
             if (issue == null)
                 return (false, null, DomainErrors.IssueNotFound);
@@ -143,7 +143,9 @@ public class ReportService(
                 throw new AccountDeletedException();
 
             Comment? comment = await context.Comments
-                .FirstOrDefaultAsync(c => c.Id == commentId && !c.IsDeleted);
+                .Include(c => c.Issue)
+                .FirstOrDefaultAsync(c => c.Id == commentId && !c.IsDeleted
+                    && c.Issue.Status == IssueStatus.Active);
 
             if (comment == null)
                 return (false, null, DomainErrors.CommentNotFound);
