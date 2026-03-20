@@ -894,7 +894,8 @@ public class CommentService(
                     PhotoUrl = null,
                     Level = 0
                 },
-            HasVoted = hasVoted
+            HasVoted = hasVoted,
+            IsHidden = comment.IsHidden
         };
     }
 }
