@@ -14,19 +14,9 @@ Implemented — block-list anti-join added to `GetIssueCommentsAsync` and `GetAl
 
 ---
 
-### 2. Cascade-delete of reporter orphans ReportCount
+### ~~2. Cascade-delete of reporter orphans ReportCount~~ DONE
 
-**File:** `Civiti.Api/Data/Configurations/ReportConfiguration.cs:23-27`
-**Impact:** Permanently flagged/hidden content with zero valid reports after reporter account deletion.
-
-When a user hard-deletes their account, `OnDelete(DeleteBehavior.Cascade)` removes their `Report` rows, but `Issue.ReportCount`, `Issue.IsFlagged`, `Comment.ReportCount`, and `Comment.IsHidden` are never recalculated. An issue flagged by 3 reporters who all later delete their accounts will remain permanently flagged with no reports to justify it and no admin path to clear it.
-
-**Fix approach (pick one):**
-- **Option A:** Switch to `OnDelete(DeleteBehavior.Restrict)` or `SetNull` and handle report cleanup manually during account deletion.
-- **Option B:** Add an EF Core `SaveChanges` interceptor that decrements the target entity's counter before cascade-deleting report rows.
-- **Option C:** Add a background job / admin endpoint that recalculates `ReportCount`/`IsFlagged`/`IsHidden` from the actual `Reports` table.
-
-Option C is the simplest and most resilient — it also provides a general "fix inconsistencies" tool for admins.
+Changed from `OnDelete(Cascade)` to `OnDelete(Restrict)` — hard deletion of a user profile now fails if they have reports, preventing silent orphaning of ReportCount/IsFlagged values. Reports must be explicitly cleaned up before user purge. A future admin recalculation endpoint (Option C from original proposal) is still recommended for resilience.
 
 ---
 
@@ -51,10 +41,9 @@ Content = (comment.IsHidden && comment.UserId != currentUserId)
 
 ---
 
-### 4. No DB-level CHECK constraint on TargetType
+### ~~4. No DB-level CHECK constraint on TargetType~~ DONE
 
-**File:** `Civiti.Api/Data/Configurations/ReportConfiguration.cs`
-**Impact:** A direct SQL insert or future code path could write an invalid discriminator, silently breaking duplicate-report and rate-limit queries.
+Added `CK_Reports_TargetType` CHECK constraint enforcing `TargetType IN ('Issue', 'Comment')` at the database level.
 
 Application-level guards (`ReportTargetTypes` constants) are already in place, but the database has no enforcement.
 
@@ -68,20 +57,9 @@ builder.ToTable(t => t.HasCheckConstraint(
 
 ---
 
-### 5. Missing index on (ReporterId, CreatedAt) for rate-limit query
+### ~~5. Missing index on (ReporterId, CreatedAt) for rate-limit query~~ DONE
 
-**File:** `Civiti.Api/Data/Configurations/ReportConfiguration.cs`
-**Impact:** Rate-limit query scans all lifetime reports per user instead of just recent ones.
-
-The rate-limit `CountAsync` filters by `ReporterId` and `CreatedAt > 1 hour ago`. The existing index covers `ReporterId` but not `CreatedAt`, forcing a heap fetch for every historical report row.
-
-**Fix approach:** Add a composite index and generate a migration:
-
-```csharp
-builder.HasIndex(r => new { r.ReporterId, r.CreatedAt });
-```
-
-Not urgent at launch (report volume starts at zero), but should be added before significant user growth.
+Added composite index `IX_Reports_ReporterId_CreatedAt` for efficient rate-limit queries.
 
 ---
 

@@ -1,3 +1,4 @@
+using Civiti.Api.Infrastructure.Constants;
 using Civiti.Api.Models.Domain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -17,6 +18,11 @@ public class ReportConfiguration : IEntityTypeConfiguration<Report>
         builder.Property(r => r.Details)
             .HasMaxLength(500);
 
+        // CHECK constraint: only valid TargetType values
+        builder.ToTable(t => t.HasCheckConstraint(
+            "CK_Reports_TargetType",
+            $"\"TargetType\" IN ('{ReportTargetTypes.Issue}', '{ReportTargetTypes.Comment}')"));
+
         // Unique index: one report per user per target
         builder.HasIndex(r => new { r.ReporterId, r.TargetType, r.TargetId })
             .IsUnique();
@@ -24,10 +30,14 @@ public class ReportConfiguration : IEntityTypeConfiguration<Report>
         // Index for looking up reports by target
         builder.HasIndex(r => new { r.TargetType, r.TargetId });
 
-        // Relationships
+        // Index for rate-limit query: per-reporter recent reports
+        builder.HasIndex(r => new { r.ReporterId, r.CreatedAt });
+
+        // Relationships — Restrict delete to prevent orphaning ReportCount/IsFlagged
+        // on target entities. Reports must be cleaned up before user deletion.
         builder.HasOne(r => r.Reporter)
             .WithMany()
             .HasForeignKey(r => r.ReporterId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
