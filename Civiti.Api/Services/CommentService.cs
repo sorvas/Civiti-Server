@@ -117,9 +117,20 @@ public class CommentService(
     {
         try
         {
-            Comment? comment = await context.Comments
+            IQueryable<Comment> commentQuery = context.Comments
                 .Include(c => c.User)
-                .FirstOrDefaultAsync(c => c.Id == commentId && !c.IsDeleted);
+                .Where(c => c.Id == commentId && !c.IsDeleted);
+
+            // Filter out comments from users blocked by the current viewer
+            if (currentUserId.HasValue)
+            {
+                commentQuery = commentQuery.Where(c =>
+                    !context.BlockedUsers.Any(b =>
+                        b.UserId == currentUserId.Value &&
+                        b.BlockedUserId == c.UserId));
+            }
+
+            Comment? comment = await commentQuery.FirstOrDefaultAsync();
 
             if (comment == null)
             {
