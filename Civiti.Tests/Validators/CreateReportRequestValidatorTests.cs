@@ -45,6 +45,7 @@ public class CreateReportRequestValidatorTests
     [InlineData("0")]
     [InlineData("99")]
     [InlineData("-1")]
+    [InlineData("+1")]
     public void Should_Fail_For_Invalid_Reason(string reason)
     {
         var request = new CreateReportRequest { Reason = reason };

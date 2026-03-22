@@ -22,7 +22,7 @@ public class CreateReportRequest : IValidatableObject
         }
 
         // Reject numeric strings (e.g. "0", "-1") — only named values are accepted
-        if (char.IsDigit(Reason[0]) || Reason[0] == '-' ||
+        if (char.IsDigit(Reason[0]) || Reason[0] == '-' || Reason[0] == '+' ||
             !Enum.TryParse<ReportReason>(Reason, ignoreCase: true, out var parsed) || !Enum.IsDefined(parsed))
         {
             yield return new ValidationResult(
