@@ -664,15 +664,21 @@ public class UserService(
 
                 // Clean up reports submitted by this user and recalculate target counters.
                 // Required because Reports.ReporterId FK uses Restrict to prevent orphaned counts.
-                var userReports = await context.Reports
-                    .Where(r => r.ReporterId == user.Id)
+                // Project only TargetType + TargetId to avoid materialising full Report entities.
+                var issueTargetIds = await context.Reports
+                    .Where(r => r.ReporterId == user.Id && r.TargetType == ReportTargetTypes.Issue)
+                    .Select(r => r.TargetId)
+                    .Distinct()
                     .ToListAsync(cancellationToken);
 
-                if (userReports.Count > 0)
+                var commentTargetIds = await context.Reports
+                    .Where(r => r.ReporterId == user.Id && r.TargetType == ReportTargetTypes.Comment)
+                    .Select(r => r.TargetId)
+                    .Distinct()
+                    .ToListAsync(cancellationToken);
+
+                if (issueTargetIds.Count > 0 || commentTargetIds.Count > 0)
                 {
-                    // Recalculate ReportCount and flags for affected issues/comments
-                    var issueTargetIds = userReports.Where(r => r.TargetType == ReportTargetTypes.Issue).Select(r => r.TargetId).Distinct().ToList();
-                    var commentTargetIds = userReports.Where(r => r.TargetType == ReportTargetTypes.Comment).Select(r => r.TargetId).Distinct().ToList();
 
                     await context.Reports
                         .Where(r => r.ReporterId == user.Id)
