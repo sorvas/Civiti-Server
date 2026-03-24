@@ -49,13 +49,11 @@ public static class ReportEndpoints
                     };
                 }
 
-                return Results.Created(
-                    $"{ApiRoutes.Issues.Base}{ApiRoutes.Reports.Report.Replace("{id:guid}", id.ToString())}",
-                    new ReportResponse
-                    {
-                        Id = reportId!.Value,
-                        Message = "Report submitted successfully"
-                    });
+                return Results.Json(new ReportResponse
+                {
+                    Id = reportId!.Value,
+                    Message = "Report submitted successfully"
+                }, statusCode: StatusCodes.Status201Created);
             }
             catch (AccountDeletedException)
             {
@@ -114,13 +112,11 @@ public static class ReportEndpoints
                     };
                 }
 
-                return Results.Created(
-                    $"{ApiRoutes.Comments.Base}{ApiRoutes.Reports.Report.Replace("{id:guid}", id.ToString())}",
-                    new ReportResponse
-                    {
-                        Id = reportId!.Value,
-                        Message = "Report submitted successfully"
-                    });
+                return Results.Json(new ReportResponse
+                {
+                    Id = reportId!.Value,
+                    Message = "Report submitted successfully"
+                }, statusCode: StatusCodes.Status201Created);
             }
             catch (AccountDeletedException)
             {
