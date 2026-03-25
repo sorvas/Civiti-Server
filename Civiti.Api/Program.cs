@@ -446,6 +446,8 @@ builder.Services.AddScoped<IContentModerationService, OpenAIModerationService>()
 builder.Services.AddScoped<IPosterService, PosterService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IPushTokenService, PushTokenService>();
+builder.Services.AddScoped<IReportService, ReportService>();
+builder.Services.AddScoped<IBlockService, BlockService>();
 
 // Built-in validation (DataAnnotations + IValidatableObject)
 builder.Services.AddValidation();
@@ -517,6 +519,8 @@ app.MapDevAuthEndpoints(); // Development-only endpoints for testing
 app.MapActivityEndpoints(); // Activity feed endpoints
 app.MapCommentEndpoints(); // Comment endpoints
 app.MapPushTokenEndpoints(); // Push notification token endpoints
+app.MapReportEndpoints(); // Report endpoints (issues + comments)
+app.MapBlockEndpoints(); // User block/unblock endpoints
 
 // Root endpoint redirects to Swagger UI
 app.MapGet("/", () => Results.Redirect("/swagger"))

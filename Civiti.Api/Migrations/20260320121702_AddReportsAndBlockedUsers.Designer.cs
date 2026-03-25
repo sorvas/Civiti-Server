@@ -3,6 +3,7 @@ using System;
 using Civiti.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Civiti.Api.Migrations
 {
     [DbContext(typeof(CivitiDbContext))]
-    partial class CivitiDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260320121702_AddReportsAndBlockedUsers")]
+    partial class AddReportsAndBlockedUsers
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -709,17 +712,12 @@ namespace Civiti.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ReporterId", "CreatedAt");
-
                     b.HasIndex("TargetType", "TargetId");
 
                     b.HasIndex("ReporterId", "TargetType", "TargetId")
                         .IsUnique();
 
-                    b.ToTable("Reports", t =>
-                        {
-                            t.HasCheckConstraint("CK_Reports_TargetType", "\"TargetType\" IN ('Issue', 'Comment')");
-                        });
+                    b.ToTable("Reports");
                 });
 
             modelBuilder.Entity("Civiti.Api.Models.Domain.UserAchievement", b =>
@@ -1151,7 +1149,7 @@ namespace Civiti.Api.Migrations
                     b.HasOne("Civiti.Api.Models.Domain.UserProfile", "Reporter")
                         .WithMany()
                         .HasForeignKey("ReporterId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Reporter");
